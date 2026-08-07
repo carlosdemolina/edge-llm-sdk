@@ -1,0 +1,14 @@
+venv/
+.env
+logs/*
+!logs/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.DS_Store
+
+# Documentos de diseño teóricos (no se versionan en el repo de implementación)
+SDK_API.md
+Implementacion_Capitulo6.md
