@@ -130,6 +130,22 @@ class HAL:
         psutil.cpu_percent(interval=None)
 
     # ---------------------------------------------------------------- #
+    # Reset (used by POST /api/reset, Phase 4 — test reproducibility)
+    # ---------------------------------------------------------------- #
+
+    async def reset(self) -> None:
+        """Reset both VehicleState and EnvironmentState to their defaults.
+
+        Both blocks are reset (not just actuators) so that Red Teaming runs
+        (Phase 9) start from a fully known baseline — e.g. a previously set
+        `vehicle_speed_kmh=180` scenario must not leak into the next test.
+        Telemetry is real hardware data and has no "default" to reset.
+        """
+        async with self._lock:
+            self.vehicle = VehicleState()
+            self.environment = EnvironmentState()
+
+    # ---------------------------------------------------------------- #
     # Actuators (DSL-driven)
     # ---------------------------------------------------------------- #
 

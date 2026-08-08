@@ -236,3 +236,55 @@ entry:
 *(pending — will be added as each phase is implemented; §3.2, the vulnerable
 pipeline, is intentionally out of scope for Phase 3)*
 
+## 3.5. Server (`app/server/main.py`, Phase 4 scope)
+
+Phase 4 implements REST endpoints only — no WebSocket/telemetry background
+task (Phase 5) and no vulnerable-mode router (Phase 7) are mounted yet.
+
+- **Lifecycle**: FastAPI's `lifespan` async context manager (not the
+  deprecated `@app.on_event`) creates a single `OllamaClient`, calls
+  `ensure_model_available()` (fail-fast: aborts startup if the model is
+  missing), a single `AuditLog`, and a single `SecureSDKCore` — all stored on
+  `app.state`. On shutdown, `ollama_client.aclose()` is awaited. `hal` is
+  imported directly as the existing module-level singleton (same pattern as
+  every previous phase), not re-wired through `app.state`.
+- **Auth architecture** — two distinct mechanisms, deliberately not unified:
+  - `POST /api/secure/chat`: **no** route-level auth guard. The
+    `X-SDK-Token` header is read and passed straight through to
+    `SecureSDKCore.handle_request()`, whose own step 0 already performs the
+    constant-time check and audits failures under a `trace_id` — a
+    route-level guard placed in front of it would either duplicate that
+    check or (if it short-circuits) silently drop `UNAUTHENTICATED` attempts
+    from the audit trail.
+  - `POST /api/scenario/set`: this route does **not** go through
+    `SecureSDKCore`, so it has its own FastAPI dependency
+    (`_verify_sdk_token`, `hmac.compare_digest`) that raises
+    `HTTPException(401)` on failure.
+  - `GET /api/state` and `POST /api/reset` are intentionally unauthenticated,
+    per the design spec's auth scoping (only `/api/secure/*` and
+    `/api/scenario/*` require the token).
+- **Response codes**: `/api/secure/chat` always returns HTTP `200`, with the
+  verdict (`ALLOWED`/`BLOCKED`) and `error_code` (including
+  `UNAUTHENTICATED`, `RESOURCE_LIMIT`, etc.) carried in the JSON body — the
+  HTTP layer is a thin transport, the SDK's own deterministic verdict is the
+  single source of truth. `/api/scenario/set` uses a conventional HTTP `401`
+  for auth failures, since it has no equivalent `ActionResult` contract.
+- **Serialization**: HAL state (`hal.vehicle`, `hal.get_environment()`,
+  `hal.get_telemetry()`) and `ActionResult` are serialized with
+  `dataclasses.asdict()`, not Pydantic — Pydantic stays scoped to the LLM I/O
+  boundary (`LLMAction`) as established in Phase 3. Request bodies
+  (`ChatRequest`, `ScenarioSetRequest`) do use minimal Pydantic models, since
+  FastAPI requires them to parse/validate incoming JSON — this is the HTTP
+  boundary, not the LLM boundary, so it does not conflict with that rule.
+- **`hal.reset()`** (added this phase): resets **both** `VehicleState` and
+  `EnvironmentState` to their defaults (not just actuators), so that Red
+  Teaming runs (Phase 9) start from a fully known baseline even after a
+  scenario like `vehicle_speed_kmh=180` was set in a previous test.
+- Endpoints implemented this phase:
+  - `GET /api/state` → `{vehicle, environment, telemetry}` snapshot.
+  - `POST /api/reset` → resets HAL, returns the resulting snapshot.
+  - `POST /api/scenario/set {vehicle_speed_kmh?, outside_temp_c?}` → token
+    required.
+  - `POST /api/secure/chat {prompt}` → delegates to `SecureSDKCore`.
+
+
