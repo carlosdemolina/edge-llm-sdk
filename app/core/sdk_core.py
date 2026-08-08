@@ -355,7 +355,7 @@ class SecureSDKCore:
             verdict="ALLOWED",
             error_code=None,
             action=llm_action.action,
-            message=f"OK: acción '{llm_action.action}' ejecutada",
+            message=f"OK: action '{llm_action.action}' executed",
             trace_id=trace_id,
             debug=debug_trace,
         )

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -14,21 +14,21 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-3 text-sm">
-      <span id="ws-status" class="px-2 py-1 rounded bg-red-900 text-red-200">Desconectado</span>
+      <span id="ws-status" class="px-2 py-1 rounded bg-red-900 text-red-200">Disconnected</span>
 
       <label class="flex items-center gap-2">
         <span class="text-slate-400">X-SDK-Token</span>
-        <input id="token-input" type="password" placeholder="pegar token"
+        <input id="token-input" type="password" placeholder="paste token"
                class="px-2 py-1 rounded bg-slate-700 border border-slate-600 text-slate-100 w-48" />
       </label>
       <button id="token-save-btn"
-              class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Guardar token</button>
+              class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Save token</button>
 
       <button id="reset-btn"
               class="px-3 py-1 rounded bg-amber-700 hover:bg-amber-600">Reset</button>
 
       <button id="audit-open-btn"
-              class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 font-semibold">Auditoría</button>
+              class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 font-semibold">Audit</button>
     </div>
   </header>
 
@@ -36,62 +36,62 @@
 
     <!-- Vehicle actuator state (read-only, changed only via chat) -->
     <section class="bg-slate-800 rounded-lg p-4 space-y-4">
-      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Estado del vehículo</h2>
+      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Vehicle state</h2>
 
       <div>
-        <h3 class="text-sm text-slate-400 mb-1">Climatización</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Climate</h3>
         <div class="grid grid-cols-3 gap-2 text-sm">
           <div class="bg-slate-700 rounded p-2 text-center">
-            <div class="text-slate-400 text-xs">Encendido</div>
+            <div class="text-slate-400 text-xs">Power</div>
             <div id="climate-power" class="font-mono break-words">—</div>
           </div>
           <div class="bg-slate-700 rounded p-2 text-center">
-            <div class="text-slate-400 text-xs">Temp. objetivo</div>
+            <div class="text-slate-400 text-xs">Target temp.</div>
             <div id="climate-temp" class="font-mono">—</div>
           </div>
           <div class="bg-slate-700 rounded p-2 text-center">
-            <div class="text-slate-400 text-xs">Ventilador</div>
+            <div class="text-slate-400 text-xs">Fan</div>
             <div id="climate-fan" class="font-mono">—</div>
           </div>
         </div>
       </div>
 
       <div>
-        <h3 class="text-sm text-slate-400 mb-1">Ventanillas (% abierto)</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Windows (% open)</h3>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Delant. izq.</span><span id="window-front_left" class="font-mono">—</span></div>
-          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Delant. der.</span><span id="window-front_right" class="font-mono">—</span></div>
-          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Tras. izq.</span><span id="window-rear_left" class="font-mono">—</span></div>
-          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Tras. der.</span><span id="window-rear_right" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Front left</span><span id="window-front_left" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Front right</span><span id="window-front_right" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Rear left</span><span id="window-rear_left" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Rear right</span><span id="window-rear_right" class="font-mono">—</span></div>
         </div>
       </div>
 
       <div>
-        <h3 class="text-sm text-slate-400 mb-1">Luces</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Lights</h3>
         <div class="grid grid-cols-3 gap-2 text-sm">
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Faros</div><div id="light-headlights" class="font-mono break-words">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Headlights</div><div id="light-headlights" class="font-mono break-words">—</div></div>
           <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Interior</div><div id="light-interior" class="font-mono break-words">—</div></div>
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Emergencia</div><div id="light-hazard" class="font-mono break-words">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Hazard</div><div id="light-hazard" class="font-mono break-words">—</div></div>
         </div>
       </div>
 
       <div>
-        <h3 class="text-sm text-slate-400 mb-1">Seguros</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Locks</h3>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Conductor</div><div id="door-driver" class="font-mono">—</div></div>
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Pasajero</div><div id="door-passenger" class="font-mono">—</div></div>
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Tras. izq.</div><div id="door-rear_left" class="font-mono">—</div></div>
-          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Tras. der.</div><div id="door-rear_right" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Driver</div><div id="door-driver" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Passenger</div><div id="door-passenger" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Rear left</div><div id="door-rear_left" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Rear right</div><div id="door-rear_right" class="font-mono">—</div></div>
         </div>
       </div>
     </section>
 
     <!-- Environment / telemetry / scenario control -->
     <section class="bg-slate-800 rounded-lg p-4 space-y-4">
-      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Entorno y telemetría</h2>
+      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Environment & telemetry</h2>
 
       <div>
-        <h3 class="text-sm text-slate-400 mb-1">Velocímetro</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Speedometer</h3>
         <div class="text-3xl font-mono" id="speed-value">0 km/h</div>
         <div class="w-full h-2 bg-slate-700 rounded mt-2">
           <div id="speed-bar" class="h-2 bg-emerald-500 rounded" style="width:0%"></div>
@@ -99,44 +99,44 @@
       </div>
 
       <div class="grid grid-cols-2 gap-2 text-sm">
-        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Temp. exterior</span><span id="outside-temp" class="font-mono">—</span></div>
-        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Temp. CPU</span><span id="cpu-temp" class="font-mono">—</span></div>
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Outside temp.</span><span id="outside-temp" class="font-mono">—</span></div>
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>CPU temp.</span><span id="cpu-temp" class="font-mono">—</span></div>
         <div class="bg-slate-700 rounded p-2 flex justify-between"><span>CPU</span><span id="cpu-percent" class="font-mono">—</span></div>
         <div class="bg-slate-700 rounded p-2 flex justify-between"><span>RAM</span><span id="ram-percent" class="font-mono">—</span></div>
       </div>
-      <p class="text-xs text-slate-500">Última lectura: <span id="telemetry-timestamp">—</span></p>
+      <p class="text-xs text-slate-500">Last reading: <span id="telemetry-timestamp">—</span></p>
 
       <form id="scenario-form" class="space-y-2 border-t border-slate-700 pt-3">
-        <h3 class="text-sm text-slate-400">Panel de Control de Escenario (operador)</h3>
+        <h3 class="text-sm text-slate-400">Scenario control panel (operator)</h3>
         <div class="flex gap-2">
           <label class="flex-1 text-sm">
-            <span class="text-slate-400 block">Velocidad (km/h)</span>
+            <span class="text-slate-400 block">Speed (km/h)</span>
             <input id="scenario-speed" type="number" min="0" max="220"
                    class="w-full px-2 py-1 rounded bg-slate-700 border border-slate-600" />
           </label>
           <label class="flex-1 text-sm">
-            <span class="text-slate-400 block">Temp. exterior (°C)</span>
+            <span class="text-slate-400 block">Outside temp. (°C)</span>
             <input id="scenario-temp" type="number" min="-20" max="50"
                    class="w-full px-2 py-1 rounded bg-slate-700 border border-slate-600" />
           </label>
         </div>
-        <button type="submit" class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 text-sm">Aplicar escenario</button>
+        <button type="submit" class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 text-sm">Apply scenario</button>
         <p id="scenario-status" class="text-xs text-slate-400"></p>
       </form>
 
       <div class="border-t border-slate-700 pt-3">
-        <h3 class="text-sm text-slate-400 mb-1">Métricas (modo seguro)</h3>
+        <h3 class="text-sm text-slate-400 mb-1">Metrics (secure mode)</h3>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Permitidas</span><span id="metrics-secure-allowed" class="font-mono">0</span></div>
-          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Bloqueadas</span><span id="metrics-secure-blocked" class="font-mono">0</span></div>
+          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Allowed</span><span id="metrics-secure-allowed" class="font-mono">0</span></div>
+          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Blocked</span><span id="metrics-secure-blocked" class="font-mono">0</span></div>
         </div>
       </div>
 
       <div class="border-t border-slate-700 pt-3">
-        <h3 class="text-sm text-amber-500 mb-1">Métricas (modo vulnerable)</h3>
+        <h3 class="text-sm text-amber-500 mb-1">Metrics (vulnerable mode)</h3>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Permitidas</span><span id="metrics-vulnerable-allowed" class="font-mono">0</span></div>
-          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Bloqueadas</span><span id="metrics-vulnerable-blocked" class="font-mono">0</span></div>
+          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Allowed</span><span id="metrics-vulnerable-allowed" class="font-mono">0</span></div>
+          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Blocked</span><span id="metrics-vulnerable-blocked" class="font-mono">0</span></div>
         </div>
       </div>
     </section>
@@ -144,26 +144,26 @@
     <!-- Chat panel -->
     <section id="chat-panel" class="bg-slate-800 rounded-lg p-4 flex flex-col space-y-3 lg:h-[calc(100vh-8rem)]">
       <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-        <h2 id="chat-panel-title" class="font-semibold text-slate-300">Chat (pipeline seguro)</h2>
+        <h2 id="chat-panel-title" class="font-semibold text-slate-300">Chat (secure pipeline)</h2>
         <label class="flex items-center gap-2 text-xs cursor-pointer select-none">
-          <span class="text-slate-400">Modo vulnerable</span>
+          <span class="text-slate-400">Vulnerable mode</span>
           <input id="vulnerable-mode-toggle" type="checkbox" class="accent-red-600 w-4 h-4" />
         </label>
       </div>
 
       <p id="vulnerable-mode-warning" class="text-xs text-red-400 hidden">
-        Modo vulnerable activo: sin autenticación, sin sanitización, sin validación de whitelist/rangos/estado. Solo para fines demostrativos.
+        Vulnerable mode active: no authentication, no sanitization, no whitelist/range/state validation. For demonstration purposes only.
       </p>
 
       <div id="chat-history" class="flex-1 overflow-y-auto space-y-2 text-sm pr-1"></div>
 
-      <p id="chat-pending" class="text-xs text-amber-400 hidden">Verificando respuesta…</p>
+      <p id="chat-pending" class="text-xs text-amber-400 hidden">Waiting for response…</p>
 
       <form id="chat-form" class="flex gap-2">
-        <textarea id="chat-input" rows="2" placeholder="Escribe una instrucción para el vehículo…"
+        <textarea id="chat-input" rows="2" placeholder="Type an instruction for the vehicle…"
                   class="flex-1 px-2 py-1 rounded bg-slate-700 border border-slate-600 resize-none"></textarea>
         <button id="chat-send-btn" type="submit"
-                class="px-4 py-1 rounded bg-emerald-700 hover:bg-emerald-600 self-end">Enviar</button>
+                class="px-4 py-1 rounded bg-emerald-700 hover:bg-emerald-600 self-end">Send</button>
       </form>
     </section>
 
@@ -175,31 +175,31 @@
        raw LLM I/O, Ollama metrics, CPU/RAM), never used for authorization. -->
   <section id="debug-section" class="hidden mx-6 mb-6 bg-slate-800 rounded-lg p-4 space-y-3 border border-amber-700/50">
     <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-      <h2 class="font-semibold text-amber-400">Admin / Debug — traza del pipeline</h2>
+      <h2 class="font-semibold text-amber-400">Admin / Debug — pipeline trace</h2>
       <div class="flex items-center space-x-2">
-        <button id="debug-refresh-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500 text-sm">Refrescar histórico</button>
-        <button id="debug-clear-btn" class="px-3 py-1 rounded bg-red-800 hover:bg-red-700 text-sm">Borrar histórico</button>
+        <button id="debug-refresh-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500 text-sm">Refresh history</button>
+        <button id="debug-clear-btn" class="px-3 py-1 rounded bg-red-800 hover:bg-red-700 text-sm">Clear history</button>
       </div>
     </div>
     <p class="text-xs text-slate-500">
-      Herramienta de desarrollo (modo debug del servidor). No es una feature de producción.
+      Developer tool (server debug mode). Not a production feature.
     </p>
     <div id="debug-traces-list" class="space-y-2 text-sm"></div>
   </section>
 
-  <!-- Auditoría modal (Phase 8) — a production feature (unlike the Admin/Debug
+  <!-- Audit modal (Phase 8) — a production feature (unlike the Admin/Debug
        section above): read-only view of the tamper-evident audit.log, always
        available (never gated by SDK_DEBUG_MODE), opened via the header button. -->
   <div id="audit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
     <div class="bg-slate-800 rounded-lg p-4 w-full max-w-2xl max-h-[85vh] flex flex-col space-y-3 border border-sky-700/50">
       <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-        <h2 class="font-semibold text-sky-400">Auditoría — registro de intentos</h2>
-        <button id="audit-close-btn" class="px-2 py-1 rounded bg-slate-600 hover:bg-slate-500 text-sm">Cerrar</button>
+        <h2 class="font-semibold text-sky-400">Audit — attempt log</h2>
+        <button id="audit-close-btn" class="px-2 py-1 rounded bg-slate-600 hover:bg-slate-500 text-sm">Close</button>
       </div>
       <div class="flex items-center justify-between gap-2 text-sm">
-        <button id="audit-refresh-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Refrescar</button>
+        <button id="audit-refresh-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Refresh</button>
         <div class="flex items-center gap-2">
-          <button id="audit-verify-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Verificar cadena</button>
+          <button id="audit-verify-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Verify chain</button>
           <span id="audit-verify-status" class="font-mono text-xs"></span>
         </div>
       </div>

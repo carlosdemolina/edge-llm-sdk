@@ -47,10 +47,10 @@ function renderWsStatus(connected) {
   const el = document.getElementById("ws-status");
   if (!el) return;
   if (connected) {
-    el.textContent = "Conectado";
+    el.textContent = "Connected";
     el.className = "px-2 py-1 rounded bg-emerald-900 text-emerald-200";
   } else {
-    el.textContent = "Desconectado";
+    el.textContent = "Disconnected";
     el.className = "px-2 py-1 rounded bg-red-900 text-red-200";
   }
 }
@@ -59,7 +59,7 @@ function renderState(state) {
   const { vehicle, environment, telemetry, metrics } = state;
 
   // Climate
-  setText("climate-power", boolLabel(vehicle.climate.power, "Encendido", "Apagado"));
+  setText("climate-power", boolLabel(vehicle.climate.power, "On", "Off"));
   setText("climate-temp", `${vehicle.climate.target_temp_c}°C`);
   setText("climate-fan", String(vehicle.climate.fan_speed));
 
@@ -69,15 +69,15 @@ function renderState(state) {
   }
 
   // Lights
-  setText("light-headlights", boolLabel(vehicle.lights.headlights, "Encendidos", "Apagados"));
-  setText("light-interior", boolLabel(vehicle.lights.interior, "Encendida", "Apagada"));
-  setText("light-hazard", boolLabel(vehicle.lights.hazard, "Activada", "Desactivada"));
+  setText("light-headlights", boolLabel(vehicle.lights.headlights, "On", "Off"));
+  setText("light-interior", boolLabel(vehicle.lights.interior, "On", "Off"));
+  setText("light-hazard", boolLabel(vehicle.lights.hazard, "On", "Off"));
 
   // Doors
-  setText("door-driver", boolLabel(vehicle.doors.driver_locked, "Bloqueado", "Abierto"));
-  setText("door-passenger", boolLabel(vehicle.doors.passenger_locked, "Bloqueado", "Abierto"));
-  setText("door-rear_left", boolLabel(vehicle.doors.rear_left_locked, "Bloqueado", "Abierto"));
-  setText("door-rear_right", boolLabel(vehicle.doors.rear_right_locked, "Bloqueado", "Abierto"));
+  setText("door-driver", boolLabel(vehicle.doors.driver_locked, "Locked", "Unlocked"));
+  setText("door-passenger", boolLabel(vehicle.doors.passenger_locked, "Locked", "Unlocked"));
+  setText("door-rear_left", boolLabel(vehicle.doors.rear_left_locked, "Locked", "Unlocked"));
+  setText("door-rear_right", boolLabel(vehicle.doors.rear_right_locked, "Locked", "Unlocked"));
 
   // Environment (speed + outside temp)
   setText("speed-value", `${environment.vehicle_speed_kmh} km/h`);
@@ -168,22 +168,22 @@ async function handleScenarioSubmit(event) {
     });
 
     if (res.status === 401) {
-      statusEl.textContent = "Token ausente o inválido.";
+      statusEl.textContent = "Token missing or invalid.";
       statusEl.className = "text-xs text-red-400";
       return;
     }
 
     if (res.ok) {
       renderState(await res.json());
-      statusEl.textContent = "Escenario aplicado.";
+      statusEl.textContent = "Scenario applied.";
       statusEl.className = "text-xs text-emerald-400";
     } else {
-      statusEl.textContent = `Error inesperado (HTTP ${res.status}).`;
+      statusEl.textContent = `Unexpected error (HTTP ${res.status}).`;
       statusEl.className = "text-xs text-red-400";
     }
   } catch (err) {
     console.error("dashboard: failed to set scenario", err);
-    statusEl.textContent = "Error de red.";
+    statusEl.textContent = "Network error.";
     statusEl.className = "text-xs text-red-400";
   }
 }
@@ -244,7 +244,7 @@ async function handleChatSubmit(event) {
       prompt,
       mode: vulnerable ? "vulnerable" : "secure",
       verdict: "BLOCKED",
-      message: "Error de red al contactar el servidor.",
+      message: "Network error contacting the server.",
       error_code: "INTERNAL_ERROR",
     });
     renderChatHistory();
@@ -263,7 +263,7 @@ function initVulnerableModeToggle() {
 
   toggle.addEventListener("change", () => {
     const vulnerable = toggle.checked;
-    title.textContent = vulnerable ? "Chat (pipeline vulnerable)" : "Chat (pipeline seguro)";
+    title.textContent = vulnerable ? "Chat (vulnerable pipeline)" : "Chat (secure pipeline)";
     warning.classList.toggle("hidden", !vulnerable);
     panel.classList.toggle("border", vulnerable);
     panel.classList.toggle("border-red-700", vulnerable);
@@ -308,7 +308,7 @@ function renderDebugTraceEntry(entry) {
     ? `${entry.sdk_total_duration_ms.toFixed(0)} ms`
     : "—";
   const isVulnerable = entry.pipeline === "vulnerable";
-  const pipelineLabel = isVulnerable ? "VULNERABLE" : "SEGURO";
+  const pipelineLabel = isVulnerable ? "VULNERABLE" : "SECURE";
   const pipelineClass = isVulnerable ? "text-red-400" : "text-sky-300";
 
   const details = document.createElement("details");
@@ -339,16 +339,16 @@ function renderDebugTraceEntry(entry) {
   body.appendChild(stagesList);
 
   if (entry.final_prompt) {
-    body.appendChild(debugBlock("Prompt final enviado a Ollama", entry.final_prompt));
+    body.appendChild(debugBlock("Final prompt sent to Ollama", entry.final_prompt));
   }
   if (entry.raw_llm_output) {
-    body.appendChild(debugBlock("Salida cruda del LLM", entry.raw_llm_output));
+    body.appendChild(debugBlock("Raw LLM output", entry.raw_llm_output));
   }
   if (entry.parsed_llm_action) {
-    body.appendChild(debugBlock("Acción parseada", JSON.stringify(entry.parsed_llm_action, null, 2)));
+    body.appendChild(debugBlock("Parsed action", JSON.stringify(entry.parsed_llm_action, null, 2)));
   }
   if (entry.ollama_metrics) {
-    body.appendChild(debugBlock("Métricas de Ollama (ns)", JSON.stringify(entry.ollama_metrics, null, 2)));
+    body.appendChild(debugBlock("Ollama metrics (ns)", JSON.stringify(entry.ollama_metrics, null, 2)));
   }
 
   const resources = document.createElement("div");
@@ -372,7 +372,7 @@ async function fetchDebugTraces() {
       headers: { "X-SDK-Token": getToken() },
     });
     if (!res.ok) {
-      container.innerHTML = `<p class="text-red-400">No se pudo cargar el histórico (HTTP ${res.status}).</p>`;
+      container.innerHTML = `<p class="text-red-400">Could not load history (HTTP ${res.status}).</p>`;
       return;
     }
     const data = await res.json();
@@ -386,7 +386,7 @@ async function fetchDebugTraces() {
 }
 
 async function clearDebugTraces() {
-  if (!confirm("¿Borrar todo el histórico de debug? Esta acción no se puede deshacer.")) {
+  if (!confirm("Clear the entire debug history? This action cannot be undone.")) {
     return;
   }
   try {
@@ -395,7 +395,7 @@ async function clearDebugTraces() {
       headers: { "X-SDK-Token": getToken() },
     });
     if (!res.ok) {
-      alert(`No se pudo borrar el histórico (HTTP ${res.status}).`);
+      alert(`Could not clear history (HTTP ${res.status}).`);
       return;
     }
     fetchDebugTraces();
@@ -421,7 +421,7 @@ async function initDebugSection() {
 }
 
 /**
- * Auditoría modal (Phase 8) — read-only view of the tamper-evident
+ * Audit modal (Phase 8) — read-only view of the tamper-evident
  * `audit.log`, a production security feature (unlike the Admin/Debug
  * section above), so it is always reachable from the header, never gated
  * by SDK_DEBUG_MODE. Both endpoints require X-SDK-Token.
@@ -442,7 +442,7 @@ function renderAuditEntry(entry) {
   const line2 = document.createElement("div");
   line2.className = "text-slate-400";
   line2.textContent =
-    `acción: ${entry.action || "—"} · error_code: ${entry.error_code || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}`;
+    `action: ${entry.action || "—"} · error_code: ${entry.error_code || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}`;
 
   const line3 = document.createElement("div");
   line3.className = "text-slate-500 break-all";
@@ -464,7 +464,7 @@ async function fetchAuditEntries() {
       headers: { "X-SDK-Token": getToken() },
     });
     if (!res.ok) {
-      container.innerHTML = `<p class="text-red-400">No se pudo cargar el registro (HTTP ${res.status}).</p>`;
+      container.innerHTML = `<p class="text-red-400">Could not load audit log (HTTP ${res.status}).</p>`;
       return;
     }
     const data = await res.json();
@@ -481,7 +481,7 @@ async function fetchVerifyChain() {
   const statusEl = document.getElementById("audit-verify-status");
   if (!statusEl) return;
 
-  statusEl.textContent = "Verificando…";
+  statusEl.textContent = "Verifying…";
   statusEl.className = "font-mono text-xs text-slate-400";
   try {
     const res = await fetch("/api/audit/verify", {
@@ -493,11 +493,11 @@ async function fetchVerifyChain() {
       return;
     }
     const { valid } = await res.json();
-    statusEl.textContent = valid ? "Cadena OK" : "Cadena ROTA";
+    statusEl.textContent = valid ? "Chain OK" : "Chain BROKEN";
     statusEl.className = `font-mono text-xs ${valid ? "text-emerald-300" : "text-red-400"}`;
   } catch (err) {
     console.error("dashboard: failed to verify audit chain", err);
-    statusEl.textContent = "Error de red";
+    statusEl.textContent = "Network error";
     statusEl.className = "font-mono text-xs text-red-400";
   }
 }

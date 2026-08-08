@@ -271,7 +271,7 @@ async def vulnerable_chat(
             verdict="ALLOWED",
             error_code=None,
             action=action,
-            message=f"(sin validación) acción '{action}' ejecutada. Salida del modelo: {exposed_output}",
+            message=f"(no validation) action '{action}' executed. Model output: {exposed_output}",
             trace_id=trace_id,
         )
     )
