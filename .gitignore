@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .DS_Store
+tools/
 
 # Documentos de diseño teóricos (no se versionan en el repo de implementación)
 SDK_API.md

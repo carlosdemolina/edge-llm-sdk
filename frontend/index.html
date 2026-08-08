@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edge LLM SDK — Vehicle IVC Prototype</title>
+  <link rel="stylesheet" href="/css/tailwind.css" />
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+  <header class="flex flex-wrap items-center justify-between gap-4 px-6 py-4 bg-slate-800 border-b border-slate-700">
+    <div>
+      <h1 class="text-lg font-semibold">Edge LLM SDK — Vehicle IVC Prototype</h1>
+      <p class="text-xs text-slate-400">Secure pipeline demo (Chapter 6)</p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <span id="ws-status" class="px-2 py-1 rounded bg-red-900 text-red-200">Desconectado</span>
+
+      <label class="flex items-center gap-2">
+        <span class="text-slate-400">X-SDK-Token</span>
+        <input id="token-input" type="password" placeholder="pegar token"
+               class="px-2 py-1 rounded bg-slate-700 border border-slate-600 text-slate-100 w-48" />
+      </label>
+      <button id="token-save-btn"
+              class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500">Guardar token</button>
+
+      <button id="reset-btn"
+              class="px-3 py-1 rounded bg-amber-700 hover:bg-amber-600">Reset</button>
+    </div>
+  </header>
+
+  <main class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
+
+    <!-- Vehicle actuator state (read-only, changed only via chat) -->
+    <section class="bg-slate-800 rounded-lg p-4 space-y-4">
+      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Estado del vehículo</h2>
+
+      <div>
+        <h3 class="text-sm text-slate-400 mb-1">Climatización</h3>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <div class="bg-slate-700 rounded p-2 text-center">
+            <div class="text-slate-400 text-xs">Encendido</div>
+            <div id="climate-power" class="font-mono break-words">—</div>
+          </div>
+          <div class="bg-slate-700 rounded p-2 text-center">
+            <div class="text-slate-400 text-xs">Temp. objetivo</div>
+            <div id="climate-temp" class="font-mono">—</div>
+          </div>
+          <div class="bg-slate-700 rounded p-2 text-center">
+            <div class="text-slate-400 text-xs">Ventilador</div>
+            <div id="climate-fan" class="font-mono">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm text-slate-400 mb-1">Ventanillas (% abierto)</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Delant. izq.</span><span id="window-front_left" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Delant. der.</span><span id="window-front_right" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Tras. izq.</span><span id="window-rear_left" class="font-mono">—</span></div>
+          <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Tras. der.</span><span id="window-rear_right" class="font-mono">—</span></div>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm text-slate-400 mb-1">Luces</h3>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Faros</div><div id="light-headlights" class="font-mono break-words">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Interior</div><div id="light-interior" class="font-mono break-words">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Emergencia</div><div id="light-hazard" class="font-mono break-words">—</div></div>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm text-slate-400 mb-1">Seguros</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Conductor</div><div id="door-driver" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Pasajero</div><div id="door-passenger" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Tras. izq.</div><div id="door-rear_left" class="font-mono">—</div></div>
+          <div class="bg-slate-700 rounded p-2 text-center"><div class="text-slate-400 text-xs">Tras. der.</div><div id="door-rear_right" class="font-mono">—</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment / telemetry / scenario control -->
+    <section class="bg-slate-800 rounded-lg p-4 space-y-4">
+      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Entorno y telemetría</h2>
+
+      <div>
+        <h3 class="text-sm text-slate-400 mb-1">Velocímetro</h3>
+        <div class="text-3xl font-mono" id="speed-value">0 km/h</div>
+        <div class="w-full h-2 bg-slate-700 rounded mt-2">
+          <div id="speed-bar" class="h-2 bg-emerald-500 rounded" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-sm">
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Temp. exterior</span><span id="outside-temp" class="font-mono">—</span></div>
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>Temp. CPU</span><span id="cpu-temp" class="font-mono">—</span></div>
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>CPU</span><span id="cpu-percent" class="font-mono">—</span></div>
+        <div class="bg-slate-700 rounded p-2 flex justify-between"><span>RAM</span><span id="ram-percent" class="font-mono">—</span></div>
+      </div>
+      <p class="text-xs text-slate-500">Última lectura: <span id="telemetry-timestamp">—</span></p>
+
+      <form id="scenario-form" class="space-y-2 border-t border-slate-700 pt-3">
+        <h3 class="text-sm text-slate-400">Panel de Control de Escenario (operador)</h3>
+        <div class="flex gap-2">
+          <label class="flex-1 text-sm">
+            <span class="text-slate-400 block">Velocidad (km/h)</span>
+            <input id="scenario-speed" type="number" min="0" max="220"
+                   class="w-full px-2 py-1 rounded bg-slate-700 border border-slate-600" />
+          </label>
+          <label class="flex-1 text-sm">
+            <span class="text-slate-400 block">Temp. exterior (°C)</span>
+            <input id="scenario-temp" type="number" min="-20" max="50"
+                   class="w-full px-2 py-1 rounded bg-slate-700 border border-slate-600" />
+          </label>
+        </div>
+        <button type="submit" class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 text-sm">Aplicar escenario</button>
+        <p id="scenario-status" class="text-xs text-slate-400"></p>
+      </form>
+
+      <div class="border-t border-slate-700 pt-3">
+        <h3 class="text-sm text-slate-400 mb-1">Métricas (modo seguro)</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Permitidas</span><span id="metrics-secure-allowed" class="font-mono">0</span></div>
+          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Bloqueadas</span><span id="metrics-secure-blocked" class="font-mono">0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chat panel -->
+    <section class="bg-slate-800 rounded-lg p-4 flex flex-col space-y-3 lg:h-[calc(100vh-8rem)]">
+      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Chat (pipeline seguro)</h2>
+
+      <div id="chat-history" class="flex-1 overflow-y-auto space-y-2 text-sm pr-1"></div>
+
+      <p id="chat-pending" class="text-xs text-amber-400 hidden">Verificando respuesta…</p>
+
+      <form id="chat-form" class="flex gap-2">
+        <textarea id="chat-input" rows="2" placeholder="Escribe una instrucción para el vehículo…"
+                  class="flex-1 px-2 py-1 rounded bg-slate-700 border border-slate-600 resize-none"></textarea>
+        <button id="chat-send-btn" type="submit"
+                class="px-4 py-1 rounded bg-emerald-700 hover:bg-emerald-600 self-end">Enviar</button>
+      </form>
+    </section>
+
+  </main>
+
+  <script src="/js/ws_client.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

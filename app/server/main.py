@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.config import (
     AUDIT_LOG_HMAC_SECRET,
@@ -29,6 +30,7 @@ from app.server import routes_common, routes_secure
 from app.server.ws_manager import manager
 
 POLICIES_DIR = Path(__file__).resolve().parent.parent / "policies"
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
 TELEMETRY_INTERVAL_S = 1.0
 
@@ -87,3 +89,8 @@ app = FastAPI(title="Edge LLM SDK — Vehicle IVC Prototype", lifespan=lifespan)
 
 app.include_router(routes_common.router)
 app.include_router(routes_secure.router)
+
+# Registered last (Phase 6): a catch-all mount, so the explicit API/WS routes
+# above always take precedence over static file serving. Same-origin serving
+# means the dashboard needs no CORS configuration at all.
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

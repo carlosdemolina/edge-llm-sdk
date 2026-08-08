@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Explicit source paths (Phase 6): the standalone Tailwind v4 CLI has no
+   node_modules/package.json context here, so we point it directly at the
+   files that use utility classes rather than relying purely on automatic
+   content detection. */
+@source "../index.html";
+@source "../js/*.js";

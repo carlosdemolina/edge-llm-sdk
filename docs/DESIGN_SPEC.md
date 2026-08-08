@@ -345,4 +345,64 @@ is mounted yet.
   within ~1 s, not synchronously pushed on every action — acceptable for a
   dashboard use case).
 
+### Phase 6: Minimal frontend (`frontend/`)
+
+- **Static serving**: `app/server/main.py` mounts `frontend/` as
+  `StaticFiles(html=True)` at `"/"`, registered **after** both API routers,
+  so the explicit REST/WS routes always take precedence over the
+  catch-all static mount. Serving the dashboard from the same FastAPI
+  process/origin as the API means **zero CORS configuration** is needed.
+- **Tailwind CSS, compiled locally, no Node/npm**: the Raspberry Pi has
+  neither `node` nor `npm` installed. Rather than installing Node (needs
+  `sudo`, more disk) or relying on the Tailwind Play CDN (would need
+  internet access at demo time — unacceptable for an edge/offline-first
+  prototype), the standalone Tailwind v4 CLI binary
+  (`tailwindcss-linux-arm64`, from Tailwind's official GitHub releases) was
+  downloaded into a git-ignored `tools/` directory. `frontend/css/input.css`
+  (`@import "tailwindcss";` plus explicit `@source` directives pointing at
+  `index.html`/`js/*.js`, since there is no `node_modules` context for
+  automatic content detection to anchor on) is compiled once into the
+  committed, minified `frontend/css/tailwind.css` via
+  `tools/tailwindcss -i frontend/css/input.css -o frontend/css/tailwind.css --minify`.
+  This build step is manual/on-demand (re-run whenever a new utility class
+  is added to the markup), not wired into the server startup.
+- **`X-SDK-Token` handling**: never hardcoded in the shipped JS. The
+  dashboard has a password-type input where the operator pastes the token
+  once per browser tab; `dashboard.js` stores it in `sessionStorage` only
+  (cleared when the tab closes, never `localStorage`, never a cookie) and
+  attaches it as the `X-SDK-Token` header on both `/api/secure/chat` and
+  `/api/scenario/set` calls.
+- **`frontend/js/ws_client.js`**: a minimal `connectTelemetry(onMessage,
+  onStatusChange)` helper — opens the WS, forwards parsed JSON messages, and
+  flips a connected/disconnected status callback. Deliberately has **no**
+  auto-reconnect/backoff loop: a dropped connection just surfaces as
+  "Desconectado" in the header. Robust reconnection is explicitly reserved
+  for Phase 10 hardening, per the implementation plan's own phase split.
+- **`frontend/js/dashboard.js`**: renders the `{vehicle, environment,
+  telemetry, metrics}` snapshot (shared by the initial `GET /api/state` call
+  on page load — so the dashboard isn't blank for the ~1 s until the first
+  WS broadcast — and every subsequent WS message, through the same
+  `renderState()` function); drives the Reset button (`POST /api/reset`),
+  the Scenario Control Panel (`POST /api/scenario/set`, operator-only,
+  token-gated), and the chat panel (`POST /api/secure/chat`, token-gated,
+  with a "Verificando respuesta…" indicator while awaiting the response,
+  consistent with the no-streaming design decision). Chat history is a
+  plain in-memory array, purely cosmetic client-side state — never resent to
+  the server as context (the LLM pipeline is stateless per request) — and
+  only ever renders the SDK's own `verdict`/`message`/`error_code` fields,
+  never an LLM `reasoning` field (which `ActionResult` does not even
+  expose).
+- **Vehicle actuator panel is read-only** in this phase: climate, windows,
+  lights, and door locks are only ever changed by the LLM via chat
+  (`apply_action()`); the operator's Scenario Control Panel only ever
+  touches `EnvironmentState` (`vehicle_speed_kmh`, `outside_temp_c`), never
+  actuators — mirroring the strict separation already enforced server-side.
+- **Validated behavior**: chat actions (e.g. "enciende las luces
+  interiores") update the corresponding actuator card and the
+  `metrics.secure` counters within one WS broadcast tick; scenario changes
+  update the speedometer/outside-temp cards immediately (from the endpoint's
+  own response, not waiting for the next WS tick); a missing/invalid token
+  surfaces a clear inline message for both the chat and scenario forms
+  (`401`/`UNAUTHENTICATED` are never silently swallowed); Reset restores all
+  cards to their default values.
 
