@@ -29,3 +29,9 @@ SDK_TOKEN: str = os.environ["SDK_TOKEN"]
 AUDIT_LOG_HMAC_SECRET: bytes = bytes.fromhex(os.environ["AUDIT_LOG_HMAC_SECRET"])
 AUDIT_LOG_PATH: Path = BASE_DIR / "logs" / "audit.log"
 
+# Developer-only debug tracing (never a production/security feature — see
+# docs/DESIGN_SPEC.md). Off by default; a server-level switch only, never
+# controllable by the chat caller/prompt itself.
+SDK_DEBUG_MODE: bool = os.environ.get("SDK_DEBUG_MODE", "false").strip().lower() == "true"
+DEBUG_TRACE_LOG_PATH: Path = BASE_DIR / "logs" / "debug_trace.jsonl"
+

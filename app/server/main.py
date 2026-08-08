@@ -18,12 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from app.config import (
     AUDIT_LOG_HMAC_SECRET,
     AUDIT_LOG_PATH,
+    DEBUG_TRACE_LOG_PATH,
     OLLAMA_HOST,
     OLLAMA_KEEP_ALIVE,
     OLLAMA_MODEL,
+    SDK_DEBUG_MODE,
     SDK_TOKEN,
 )
 from app.core.audit_log import AuditLog
+from app.core.debug_log import DebugTraceLog
 from app.core.sdk_core import SecureSDKCore
 from app.hal.hal import hal
 from app.llm.ollama_client import OllamaClient
@@ -65,8 +68,15 @@ async def lifespan(app: FastAPI):
     dsl_catalog = json.loads((POLICIES_DIR / "dsl_actions.json").read_text())
     policy = json.loads((POLICIES_DIR / "vehicle_default.json").read_text())
 
+    # Developer-only debug tracing (see docs/DESIGN_SPEC.md): off by default.
+    # When enabled, `DebugTraceLog` writes plain-text prompts/LLM output to a
+    # git-ignored file — never a production security control, unlike AuditLog.
+    debug_log = DebugTraceLog(path=DEBUG_TRACE_LOG_PATH) if SDK_DEBUG_MODE else None
+
     app.state.ollama_client = ollama_client
     app.state.audit_log = audit_log
+    app.state.debug_mode = SDK_DEBUG_MODE
+    app.state.debug_log = debug_log
     app.state.secure_core = SecureSDKCore(
         hal=hal,
         ollama_client=ollama_client,
@@ -74,6 +84,8 @@ async def lifespan(app: FastAPI):
         sdk_token=SDK_TOKEN,
         dsl_catalog=dsl_catalog,
         policy=policy,
+        debug_mode=SDK_DEBUG_MODE,
+        debug_log=debug_log,
     )
     # Vulnerable-mode counters are pre-declared even though nothing increments
     # them until Phase 7, matching the final §3.5 metrics payload shape.

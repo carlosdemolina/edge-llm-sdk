@@ -231,6 +231,64 @@ entry:
   continuity from genesis — any single tampered field, in any past entry,
   breaks verification for that entry and all entries after it.
 
+## 3.4-bis. Developer debug trace (`app/core/debug_log.py`, `SDK_DEBUG_MODE`)
+
+A **developer tool, deliberately not a production security feature** —
+contrasted explicitly with §3.4's `AuditLog`:
+
+| | `AuditLog` (§3.4) | `DebugTraceLog` (this section) |
+|---|---|---|
+| Purpose | Production security control | Developer/TFM tooling (model & policy iteration, future test-bench) |
+| Prompt storage | `prompt_sha256` only, never plaintext | Full plaintext prompt, final encapsulated prompt, and raw LLM output |
+| Integrity | HMAC hash-chained, tamper-evident | No chain — a plain JSONL append log |
+| Enabled | Always | Only when `SDK_DEBUG_MODE=true` (off by default); `logs/*` is gitignored either way |
+| Exposed to | Nothing reads it back over HTTP | `GET /api/debug/traces` (token-gated), rendered in the dashboard's Admin/Debug tab |
+
+Rationale for a coarse, uniform `error_code` in the chat's own response
+(§2.5) still holds unchanged: `ActionResult.message` never reveals which
+pipeline layer blocked a request, to avoid handing an oracle to whoever is
+typing prompts into the chat (the same untrusted party the pipeline
+defends against). The debug trace is a **separate, server-operator-gated
+channel** (`SDK_DEBUG_MODE`, a deployment-time switch never controllable by
+the chat caller/prompt) — it does not weaken that guarantee, since a real
+release simply ships with the switch off.
+
+- **`PipelineStageTrace`** (`app/core/schemas.py`): one entry per pipeline
+  step (`authentication`, `rate_limit_cooldown`, `ctx_creation`,
+  `sanitization`, `prompt_encapsulation`, `ollama_call`, `json_parse`,
+  `schema_validation`, `dsl_whitelist_range`, `canary_leak_check`,
+  `contextual_policy`, `execution`), each with `status`
+  (`passed`/`blocked`/`skipped`), an optional `detail` string, and
+  `duration_ms` timed since the previous stage.
+- **`DebugTrace`**: the full per-request trace — `stages`, the final
+  encapsulated `final_prompt` sent to Ollama, the LLM's `raw_llm_output`,
+  the `parsed_llm_action` (pre-Pydantic-validation JSON), `ollama_metrics`
+  (Ollama's own `total_duration`/`load_duration`/`prompt_eval_count`/
+  `prompt_eval_duration`/`eval_count`/`eval_duration`, in nanoseconds —
+  present in every non-streaming `/api/generate` response at no extra cost),
+  `sdk_total_duration_ms` (the whole `handle_request()` call, so the
+  pipeline's own overhead can be separated from Ollama's inference time),
+  and a CPU/RAM snapshot (`psutil`) taken at the very start and very end of
+  the request.
+- **Known limitation, documented rather than engineered around**:
+  `psutil.cpu_percent(interval=None)` measures usage *since the last call
+  anywhere in the process* — the Phase 5 telemetry broadcast loop also
+  samples it every second in the background, so the CPU delta attributed to
+  a single debug-traced request is an approximation, not a perfectly
+  isolated per-request measurement.
+- `SecureSDKCore` accepts `debug_mode: bool = False` and
+  `debug_log: DebugTraceLog | None = None`; when off, every debug-related
+  call in `handle_request()` is a no-op (`_mark_stage()`/
+  `_finalize_debug_trace()` short-circuit on `debug_ctx is None`), so
+  `ActionResult.debug` is always `None` and no file is ever written.
+- `GET /api/debug/status` (unauthenticated — only reveals the boolean
+  switch, no trace content) lets the frontend decide whether to show the
+  Admin/Debug tab at all. `GET /api/debug/traces` (token-gated, `404` when
+  debug mode is off) returns the last N entries for the dashboard's
+  historical view — chosen over relying only on in-browser memory so the
+  history survives page reloads, matching the explicit requirement that
+  these traces double as raw material for a future automated test bench.
+
 ## 3.2, 5.x–6.x
 
 *(pending — will be added as each phase is implemented; §3.2, the vulnerable
@@ -277,6 +335,10 @@ is mounted yet.
   - `GET /api/state` and `POST /api/reset` are intentionally unauthenticated,
     per the design spec's auth scoping (only `/api/secure/*` and
     `/api/scenario/*` require the token).
+  - `GET /api/debug/status` is also unauthenticated (reveals only the
+    `SDK_DEBUG_MODE` boolean, never trace content); `GET /api/debug/traces`
+    uses the same `_verify_sdk_token` dependency as `/api/scenario/set` and
+    `404`s whenever debug mode is off (see §3.4-bis).
 - **Response codes**: `/api/secure/chat` always returns HTTP `200`, with the
   verdict (`ALLOWED`/`BLOCKED`) and `error_code` (including
   `UNAUTHENTICATED`, `RESOURCE_LIMIT`, etc.) carried in the JSON body — the

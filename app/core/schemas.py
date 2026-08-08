@@ -46,9 +46,47 @@ class Ctx:
 
 
 @dataclass
+class PipelineStageTrace:
+    """One step of the secure pipeline (see docs/DESIGN_SPEC.md §3.1),
+    captured only when `SDK_DEBUG_MODE` is on — a developer-tooling
+    observation, never used for authorization decisions.
+    """
+
+    name: str
+    status: str                     # "passed" | "blocked" | "skipped"
+    detail: str | None = None
+    duration_ms: float | None = None
+
+
+@dataclass
+class DebugTrace:
+    """Full developer-debug trace of a single `handle_request()` call.
+
+    Deliberately NOT part of the audit log's tamper-evident chain (see
+    `app/core/audit_log.py`): this is a developer tool for model/design
+    iteration and future test-bench tooling, not a production security
+    control, so it carries the prompt and LLM output in plain text and is
+    only ever produced when `SDK_DEBUG_MODE` is explicitly enabled.
+    """
+
+    timestamp: str
+    stages: list[PipelineStageTrace]
+    final_prompt: str | None = None
+    raw_llm_output: str | None = None
+    parsed_llm_action: dict[str, Any] | None = None
+    ollama_metrics: dict[str, Any] | None = None
+    sdk_total_duration_ms: float | None = None
+    cpu_percent_start: float | None = None
+    cpu_percent_end: float | None = None
+    ram_percent_start: float | None = None
+    ram_percent_end: float | None = None
+
+
+@dataclass
 class ActionResult:
     verdict: str                     # "ALLOWED" | "BLOCKED"
     error_code: ErrorCode | None
     action: str | None
     message: str                     # SDK-deterministic message, never the LLM's `reasoning`
     trace_id: str | None
+    debug: DebugTrace | None = None  # only populated when SDK_DEBUG_MODE is on

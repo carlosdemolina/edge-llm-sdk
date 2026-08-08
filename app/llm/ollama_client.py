@@ -49,6 +49,7 @@ class OllamaResult:
     text: str | None                # raw response text — NOT parsed here
     latency_ms: float | None
     error: str | None = None        # "timeout" | "connection_error" | "http_status_error" | None
+    raw_metrics: dict | None = None # Ollama's own timing/token counters (ns), see generate()
 
 
 class OllamaClient:
@@ -139,8 +140,26 @@ class OllamaClient:
                     ok=False, text=None, latency_ms=latency_ms, error=f"connection_error: {exc}"
                 )
 
-        text = response.json().get("response")
-        return OllamaResult(ok=True, text=text, latency_ms=latency_ms, error=None)
+        body = response.json()
+        text = body.get("response")
+        # Ollama includes these counters in the final (non-streaming) response
+        # at no extra cost — no special request flag needed. Nanoseconds, as
+        # reported by Ollama; consumers (e.g. the debug trace) convert to ms.
+        raw_metrics = {
+            key: body[key]
+            for key in (
+                "total_duration",
+                "load_duration",
+                "prompt_eval_count",
+                "prompt_eval_duration",
+                "eval_count",
+                "eval_duration",
+            )
+            if key in body
+        }
+        return OllamaResult(
+            ok=True, text=text, latency_ms=latency_ms, error=None, raw_metrics=raw_metrics
+        )
 
     async def warm_up(self, keep_alive: str) -> None:
         """Best-effort cold-start absorption: send a trivial prompt at

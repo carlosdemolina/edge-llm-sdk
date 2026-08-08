@@ -148,6 +148,21 @@
 
   </main>
 
+  <!-- Admin / Debug panel — only shown when the server has SDK_DEBUG_MODE
+       enabled (GET /api/debug/status). Developer tool, not a production
+       feature: shows the full per-request pipeline trace (stages, timing,
+       raw LLM I/O, Ollama metrics, CPU/RAM), never used for authorization. -->
+  <section id="debug-section" class="hidden mx-6 mb-6 bg-slate-800 rounded-lg p-4 space-y-3 border border-amber-700/50">
+    <div class="flex items-center justify-between border-b border-slate-700 pb-2">
+      <h2 class="font-semibold text-amber-400">Admin / Debug — traza del pipeline</h2>
+      <button id="debug-refresh-btn" class="px-3 py-1 rounded bg-slate-600 hover:bg-slate-500 text-sm">Refrescar histórico</button>
+    </div>
+    <p class="text-xs text-slate-500">
+      Herramienta de desarrollo (modo debug del servidor). No es una feature de producción.
+    </p>
+    <div id="debug-traces-list" class="space-y-2 text-sm"></div>
+  </section>
+
   <script src="/js/ws_client.js"></script>
   <script src="/js/dashboard.js"></script>
 </body>

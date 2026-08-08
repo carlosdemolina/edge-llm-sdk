@@ -114,3 +114,57 @@ Validated on-device: server startup log printed
 `uvicorn` was already accepting connections, confirming the warm-up runs
 concurrently rather than blocking startup.
 
+## Addendum (2026-08-08): developer debug-trace mode (`SDK_DEBUG_MODE`)
+
+Follow-up to a design discussion about wanting visibility into "what the
+security pipeline actually did" for a given chat prompt (e.g. why `"tengo
+frío"` returned `ALLOWED`/`BLOCKED [...]`), for TFM analysis/debugging and a
+future automated test bench. Explicitly scoped as a **developer tool, not a
+production feature** — kept off by default and clearly separated from the
+production `AuditLog` (see `docs/DESIGN_SPEC.md` §3.4-bis for the full
+rationale and comparison table).
+
+What was added:
+
+- `app/config.py`: `SDK_DEBUG_MODE` (env var, default `false`) and
+  `DEBUG_TRACE_LOG_PATH` (`logs/debug_trace.jsonl`, already covered by the
+  existing `logs/*` gitignore rule).
+- `app/core/schemas.py`: `PipelineStageTrace` and `DebugTrace` dataclasses;
+  `ActionResult` gains an additive `debug: DebugTrace | None = None` field
+  (always `None` when debug mode is off — no change to the existing
+  contract).
+- `app/llm/ollama_client.py`: `OllamaResult.raw_metrics` now captures
+  Ollama's own `total_duration`/`load_duration`/`prompt_eval_count`/
+  `prompt_eval_duration`/`eval_count`/`eval_duration` from the existing
+  non-streaming response (no new request parameters needed).
+- New `app/core/debug_log.py` (`DebugTraceLog`): a plain JSONL append log
+  (no HMAC chain — not a security control), with `append()` and
+  `read_last(limit)`.
+- `app/core/sdk_core.py`: `SecureSDKCore` accepts `debug_mode`/`debug_log`;
+  `handle_request()` now marks each of the ~12 pipeline stages (name,
+  status, duration) via a no-op-when-disabled `_mark_stage()` helper, and
+  captures the final encapsulated prompt, raw/parsed LLM output, Ollama
+  metrics, and a `psutil` CPU/RAM snapshot around the request — all
+  attached to `ActionResult.debug` and persisted via `DebugTraceLog` only
+  when `debug_mode` is on.
+- `app/server/main.py`: wires `SDK_DEBUG_MODE`/`DebugTraceLog` into
+  `lifespan()` and `SecureSDKCore`'s construction.
+- `app/server/routes_common.py`: `GET /api/debug/status` (unauthenticated,
+  boolean only) and `GET /api/debug/traces` (token-gated, `404` when debug
+  mode is off) for the dashboard's historical view.
+- `frontend/index.html` / `frontend/js/dashboard.js`: a hidden-by-default
+  "Admin / Debug" section, shown only when `/api/debug/status` confirms
+  debug mode is on, rendering an expandable historical list of traces
+  (stages, timings, prompt, raw/parsed LLM output, Ollama metrics, CPU/RAM)
+  fetched from `/api/debug/traces`, refreshed automatically after each chat
+  submission.
+
+Validated on-device: with `SDK_DEBUG_MODE=true`, the Admin/Debug tab
+appears, sending a chat prompt populates a new expandable entry with the
+full stage-by-stage trace and Ollama/CPU/RAM metrics, and the history
+persists across a page reload (served from `logs/debug_trace.jsonl`, not
+just browser memory). With `SDK_DEBUG_MODE` unset (default), the tab does
+not render, `/api/debug/traces` returns `404`, and `ActionResult.debug` is
+`None` on every response — chat behavior is otherwise byte-for-byte
+identical to before this addendum.
+

@@ -81,3 +81,28 @@ async def set_scenario(body: ScenarioSetRequest, request: Request) -> dict:
         outside_temp_c=body.outside_temp_c,
     )
     return build_state_snapshot(request.app.state.metrics)
+
+
+@router.get("/api/debug/status")
+async def get_debug_status(request: Request) -> dict:
+    """Unauthenticated on purpose: this only reveals whether the server-side
+    `SDK_DEBUG_MODE` switch is on, so the frontend knows whether to show the
+    Admin/Debug tab at all \u2014 no trace content is returned here.
+    """
+    return {"debug_mode": request.app.state.debug_mode}
+
+
+@router.get("/api/debug/traces", dependencies=[Depends(_verify_sdk_token)])
+async def get_debug_traces(request: Request, limit: int = 20) -> dict:
+    """Developer-only endpoint: returns the last `limit` debug traces.
+
+    404s when `SDK_DEBUG_MODE` is off, since `DebugTraceLog` isn't even
+    instantiated in that case \u2014 this route only ever exposes anything on a
+    server explicitly started with debug mode enabled.
+    """
+    debug_log = request.app.state.debug_log
+    if debug_log is None:
+        raise HTTPException(status_code=404, detail="Debug mode is disabled on this server")
+    traces = await debug_log.read_last(limit)
+    return {"traces": traces}
+

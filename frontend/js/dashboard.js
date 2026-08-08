@@ -216,6 +216,13 @@ async function handleChatSubmit(event) {
     });
     renderChatHistory();
     input.value = "";
+
+    // If the Admin/Debug tab is visible, refresh its history so the trace
+    // of this very request shows up immediately.
+    const debugSection = document.getElementById("debug-section");
+    if (debugSection && !debugSection.classList.contains("hidden")) {
+      fetchDebugTraces();
+    }
   } catch (err) {
     console.error("dashboard: failed to send chat prompt", err);
     chatHistory.push({
@@ -242,6 +249,122 @@ function initTokenField() {
   });
 }
 
+/**
+ * Admin/Debug tab (developer tool, see docs/DESIGN_SPEC.md). Hidden unless
+ * the server confirms SDK_DEBUG_MODE is on (GET /api/debug/status) — no
+ * trace content is ever fetched or rendered otherwise.
+ */
+function debugBlock(label, content) {
+  const wrap = document.createElement("div");
+  const labelEl = document.createElement("div");
+  labelEl.className = "text-slate-400";
+  labelEl.textContent = label;
+  const pre = document.createElement("pre");
+  pre.className = "bg-slate-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words";
+  pre.textContent = content;
+  wrap.appendChild(labelEl);
+  wrap.appendChild(pre);
+  return wrap;
+}
+
+function renderDebugTraceEntry(entry) {
+  const stages = entry.stages || [];
+  const blockedStage = stages.find((s) => s.status === "blocked");
+  const outcomeLabel = blockedStage ? `BLOCKED (${blockedStage.name})` : "ALLOWED";
+  const outcomeClass = blockedStage ? "text-red-300" : "text-emerald-300";
+  const totalMs = typeof entry.sdk_total_duration_ms === "number"
+    ? `${entry.sdk_total_duration_ms.toFixed(0)} ms`
+    : "—";
+
+  const details = document.createElement("details");
+  details.className = "bg-slate-700 rounded p-2";
+
+  const summary = document.createElement("summary");
+  summary.className = "cursor-pointer font-mono text-xs flex justify-between gap-2";
+  summary.innerHTML =
+    `<span>${entry.timestamp || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}</span>` +
+    `<span class="${outcomeClass}">${outcomeLabel} · ${totalMs}</span>`;
+
+  const body = document.createElement("div");
+  body.className = "mt-2 space-y-2 text-xs";
+
+  const stagesList = document.createElement("ul");
+  stagesList.className = "space-y-0.5";
+  for (const stage of stages) {
+    const li = document.createElement("li");
+    const color =
+      stage.status === "blocked" ? "text-red-300" :
+      stage.status === "skipped" ? "text-slate-500" : "text-emerald-300";
+    li.className = `font-mono ${color}`;
+    const durationPart = typeof stage.duration_ms === "number" ? ` (${stage.duration_ms.toFixed(1)} ms)` : "";
+    const detailPart = stage.detail ? ` — ${stage.detail}` : "";
+    li.textContent = `${stage.name}: ${stage.status}${durationPart}${detailPart}`;
+    stagesList.appendChild(li);
+  }
+  body.appendChild(stagesList);
+
+  if (entry.final_prompt) {
+    body.appendChild(debugBlock("Prompt final enviado a Ollama", entry.final_prompt));
+  }
+  if (entry.raw_llm_output) {
+    body.appendChild(debugBlock("Salida cruda del LLM", entry.raw_llm_output));
+  }
+  if (entry.parsed_llm_action) {
+    body.appendChild(debugBlock("Acción parseada", JSON.stringify(entry.parsed_llm_action, null, 2)));
+  }
+  if (entry.ollama_metrics) {
+    body.appendChild(debugBlock("Métricas de Ollama (ns)", JSON.stringify(entry.ollama_metrics, null, 2)));
+  }
+
+  const resources = document.createElement("div");
+  resources.className = "text-slate-400";
+  resources.textContent =
+    `CPU: ${entry.cpu_percent_start ?? "—"}% → ${entry.cpu_percent_end ?? "—"}% · ` +
+    `RAM: ${entry.ram_percent_start ?? "—"}% → ${entry.ram_percent_end ?? "—"}%`;
+  body.appendChild(resources);
+
+  details.appendChild(summary);
+  details.appendChild(body);
+  return details;
+}
+
+async function fetchDebugTraces() {
+  const container = document.getElementById("debug-traces-list");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/debug/traces?limit=20", {
+      headers: { "X-SDK-Token": getToken() },
+    });
+    if (!res.ok) {
+      container.innerHTML = `<p class="text-red-400">No se pudo cargar el histórico (HTTP ${res.status}).</p>`;
+      return;
+    }
+    const data = await res.json();
+    container.innerHTML = "";
+    for (const entry of data.traces) {
+      container.appendChild(renderDebugTraceEntry(entry));
+    }
+  } catch (err) {
+    console.error("dashboard: failed to fetch debug traces", err);
+  }
+}
+
+async function initDebugSection() {
+  try {
+    const res = await fetch("/api/debug/status");
+    if (!res.ok) return;
+    const { debug_mode } = await res.json();
+    if (!debug_mode) return;
+
+    document.getElementById("debug-section").classList.remove("hidden");
+    document.getElementById("debug-refresh-btn").addEventListener("click", fetchDebugTraces);
+    fetchDebugTraces();
+  } catch (err) {
+    console.error("dashboard: failed to check debug status", err);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initTokenField();
 
@@ -251,4 +374,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
   fetchInitialState();
   connectTelemetry(renderState, renderWsStatus);
+  initDebugSection();
 });
