@@ -88,12 +88,18 @@ class OllamaClient:
         prompt: str,
         config: InferenceConfig,
         timeout: httpx.Timeout | None = None,
+        keep_alive: str | None = None,
     ) -> OllamaResult:
         """Send a single prompt to Ollama's /api/generate endpoint.
 
         Serialized via `asyncio.Semaphore(1)`: only one inference runs at a
         time regardless of caller, since the Pi can only load one model in
         memory (impediment §4.5 of the design spec).
+
+        `keep_alive` (Ollama duration string, e.g. `"5m"`) is passed through
+        unchanged when set — used by `warm_up()` to keep the model resident
+        in memory for a while after startup, without affecting the default
+        Ollama behavior (~5 min) for ordinary chat calls that omit it.
         """
         payload: dict = {
             "model": self.model,
@@ -107,6 +113,8 @@ class OllamaClient:
         }
         if config.format_json:
             payload["format"] = "json"
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
 
         request_timeout = timeout or self._default_timeout
 
@@ -133,6 +141,37 @@ class OllamaClient:
 
         text = response.json().get("response")
         return OllamaResult(ok=True, text=text, latency_ms=latency_ms, error=None)
+
+    async def warm_up(self, keep_alive: str) -> None:
+        """Best-effort cold-start absorption: send a trivial prompt at
+        startup so the model is already loaded in memory by the time the
+        first real user request arrives, instead of that request eating the
+        ~8-12s load time and risking a `RESOURCE_LIMIT` timeout.
+
+        Meant to be launched as a fire-and-forget `asyncio.create_task()` from
+        the FastAPI `lifespan()`, in parallel with the server accepting
+        connections — never awaited inline, since it would otherwise delay
+        startup by the same cold-start latency it is meant to hide.
+
+        Deliberately swallows all errors: this is an optimization, not a
+        correctness requirement (`ensure_model_available()` is the real
+        fail-fast startup check). If Ollama is slow or briefly unreachable,
+        the warm-up simply doesn't help this time; the next real request
+        will still pay its own cold-start cost.
+        """
+        try:
+            result = await self.generate(
+                "ping",
+                InferenceConfig(temperature=0.0, top_k=1, top_p=0.1, format_json=False),
+                timeout=DEFAULT_TIMEOUT,
+                keep_alive=keep_alive,
+            )
+            if result.ok:
+                print(f"[ollama_client] Warm-up OK ({result.latency_ms:.0f} ms) — model resident in memory.")
+            else:
+                print(f"[ollama_client] Warm-up failed ({result.error}) — first real request may be slow.")
+        except Exception as exc:  # noqa: BLE001 - best-effort, must never crash startup
+            print(f"[ollama_client] Warm-up raised an unexpected error ({exc}) — ignored.")
 
     async def aclose(self) -> None:
         await self._client.aclose()

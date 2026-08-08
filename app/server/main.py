@@ -19,6 +19,7 @@ from app.config import (
     AUDIT_LOG_HMAC_SECRET,
     AUDIT_LOG_PATH,
     OLLAMA_HOST,
+    OLLAMA_KEEP_ALIVE,
     OLLAMA_MODEL,
     SDK_TOKEN,
 )
@@ -52,6 +53,13 @@ async def lifespan(app: FastAPI):
     ollama_client = OllamaClient(host=OLLAMA_HOST, model=OLLAMA_MODEL)
     # Fail-fast: abort startup rather than fail silently on the user's first chat.
     await ollama_client.ensure_model_available()
+    # Best-effort warm-up, fired in the background (NOT awaited) so it never
+    # delays the server accepting connections: absorbs the ~8-12s cold-start
+    # load time before the first real chat request, instead of that request
+    # risking a RESOURCE_LIMIT timeout. Reference kept (not just fire-and-
+    # forget) so asyncio doesn't garbage-collect the task mid-execution;
+    # it is a one-shot task, so it needs no explicit cancellation at shutdown.
+    warmup_task = asyncio.create_task(ollama_client.warm_up(OLLAMA_KEEP_ALIVE))
 
     audit_log = AuditLog(path=AUDIT_LOG_PATH, hmac_secret=AUDIT_LOG_HMAC_SECRET)
     dsl_catalog = json.loads((POLICIES_DIR / "dsl_actions.json").read_text())

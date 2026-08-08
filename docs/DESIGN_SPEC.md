@@ -249,6 +249,19 @@ is mounted yet.
   `app.state`. On shutdown, `ollama_client.aclose()` is awaited. `hal` is
   imported directly as the existing module-level singleton (same pattern as
   every previous phase), not re-wired through `app.state`.
+- **Startup warm-up (post-Phase 6 addendum)**: right after
+  `ensure_model_available()`, `lifespan` fires
+  `ollama_client.warm_up(OLLAMA_KEEP_ALIVE)` as a background
+  `asyncio.create_task` (reference kept to avoid premature GC, never
+  awaited) — a trivial `"ping"` completion that absorbs Ollama's ~8-12s
+  cold-start model load *before* the first real user chat request arrives,
+  instead of that request risking a `RESOURCE_LIMIT` timeout. It is
+  best-effort: exceptions are swallowed and logged, never raised — the real
+  fail-fast startup guard remains `ensure_model_available()`. `keep_alive`
+  (an Ollama duration string, default `"5m"` via `OLLAMA_KEEP_ALIVE` in
+  `app/config.py`) deliberately keeps the model resident only for a bounded
+  window rather than `"-1"` (forever) — this is a prototype demo, not a
+  24/7 service, so permanently pinning RAM on the Pi was rejected.
 - **Auth architecture** — two distinct mechanisms, deliberately not unified:
   - `POST /api/secure/chat`: **no** route-level auth guard. The
     `X-SDK-Token` header is read and passed straight through to

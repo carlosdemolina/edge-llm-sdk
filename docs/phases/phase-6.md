@@ -86,3 +86,31 @@ against `uvicorn app.server.main:app` on the Raspberry Pi:
 - Chat history is purely cosmetic client-side state, never resent to the
   server, and only ever displays the SDK's deterministic verdict fields —
   never the LLM's own reasoning text.
+
+## Addendum (2026-08-08): automatic Ollama warm-up at startup
+
+While manually testing the Phase 6 dashboard, the first chat message after
+starting the server hit the already-documented cold-start `RESOURCE_LIMIT`
+(Ollama unloads the model from memory when idle; see Phase 2). Rather than
+adding a UI "activate listening" toggle (rejected — keeping the model
+permanently loaded wastes RAM/CPU on the Pi for no benefit in a demo
+prototype), added an automatic, best-effort warm-up on server startup:
+
+- `OllamaClient.generate()` now accepts an optional `keep_alive` (Ollama
+  duration string) forwarded verbatim in the request payload.
+- New `OllamaClient.warm_up(keep_alive)`: sends a trivial `"ping"` prompt,
+  swallows all errors (never raised — this is an optimization, not a
+  correctness guard).
+- `app/config.py`: new `OLLAMA_KEEP_ALIVE` (default `"5m"`, not `"-1"`, to
+  avoid pinning the model in memory indefinitely).
+- `app/server/main.py`'s `lifespan()` fires
+  `asyncio.create_task(ollama_client.warm_up(OLLAMA_KEEP_ALIVE))` right after
+  `ensure_model_available()` — a background task (reference kept to avoid
+  GC), never awaited, so server startup and the first HTTP/WS connections
+  are not delayed by the ~8-12s cold-start latency.
+
+Validated on-device: server startup log printed
+`[ollama_client] Warm-up OK (2543 ms) — model resident in memory.` while
+`uvicorn` was already accepting connections, confirming the warm-up runs
+concurrently rather than blocking startup.
+
