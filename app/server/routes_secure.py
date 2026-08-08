@@ -30,4 +30,8 @@ async def secure_chat(
 ) -> dict:
     core = request.app.state.secure_core
     result = await core.handle_request(body.prompt, x_sdk_token or "")
+
+    bucket = "allowed" if result.verdict == "ALLOWED" else "blocked"
+    request.app.state.metrics["secure"][bucket] += 1
+
     return asdict(result)

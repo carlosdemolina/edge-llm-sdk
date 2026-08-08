@@ -13,20 +13,27 @@ from __future__ import annotations
 import hmac
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.config import SDK_TOKEN
 from app.hal.hal import hal
+from app.server.ws_manager import manager
 
 router = APIRouter()
 
 
-def _state_snapshot() -> dict:
+def build_state_snapshot(metrics: dict) -> dict:
+    """Single source of truth for the vehicle/environment/telemetry/metrics
+    view, shared by GET /api/state, POST /api/reset, and the WS telemetry
+    broadcast loop (main.py) — REST and WS must never show two different
+    shapes of the same state.
+    """
     return {
         "vehicle": asdict(hal.vehicle),
         "environment": asdict(hal.get_environment()),
         "telemetry": asdict(hal.get_telemetry()),
+        "metrics": metrics,
     }
 
 
@@ -39,14 +46,27 @@ def _verify_sdk_token(x_sdk_token: str | None = Header(default=None)) -> None:
 
 
 @router.get("/api/state")
-async def get_state() -> dict:
-    return _state_snapshot()
+async def get_state(request: Request) -> dict:
+    return build_state_snapshot(request.app.state.metrics)
 
 
 @router.post("/api/reset")
-async def reset_state() -> dict:
+async def reset_state(request: Request) -> dict:
     await hal.reset()
-    return _state_snapshot()
+    return build_state_snapshot(request.app.state.metrics)
+
+
+@router.websocket("/ws/telemetry")
+async def ws_telemetry(websocket: WebSocket) -> None:
+    await manager.connect(websocket)
+    try:
+        while True:
+            # The server never expects a message from the client; this only
+            # blocks until the client disconnects (or sends something, which
+            # is ignored — this is a push-only channel).
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 class ScenarioSetRequest(BaseModel):
@@ -55,9 +75,9 @@ class ScenarioSetRequest(BaseModel):
 
 
 @router.post("/api/scenario/set", dependencies=[Depends(_verify_sdk_token)])
-async def set_scenario(body: ScenarioSetRequest) -> dict:
+async def set_scenario(body: ScenarioSetRequest, request: Request) -> dict:
     await hal.set_environment(
         vehicle_speed_kmh=body.vehicle_speed_kmh,
         outside_temp_c=body.outside_temp_c,
     )
-    return _state_snapshot()
+    return build_state_snapshot(request.app.state.metrics)

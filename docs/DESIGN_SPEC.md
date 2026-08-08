@@ -236,10 +236,11 @@ entry:
 *(pending — will be added as each phase is implemented; §3.2, the vulnerable
 pipeline, is intentionally out of scope for Phase 3)*
 
-## 3.5. Server (`app/server/main.py`, Phase 4 scope)
+## 3.5. Server (`app/server/main.py`, Phases 4–5 scope)
 
-Phase 4 implements REST endpoints only — no WebSocket/telemetry background
-task (Phase 5) and no vulnerable-mode router (Phase 7) are mounted yet.
+Phase 4 implemented the REST endpoints. Phase 5 (below) adds the WebSocket
+telemetry broadcast loop on top of them. No vulnerable-mode router (Phase 7)
+is mounted yet.
 
 - **Lifecycle**: FastAPI's `lifespan` async context manager (not the
   deprecated `@app.on_event`) creates a single `OllamaClient`, calls
@@ -280,11 +281,68 @@ task (Phase 5) and no vulnerable-mode router (Phase 7) are mounted yet.
   `EnvironmentState` to their defaults (not just actuators), so that Red
   Teaming runs (Phase 9) start from a fully known baseline even after a
   scenario like `vehicle_speed_kmh=180` was set in a previous test.
-- Endpoints implemented this phase:
-  - `GET /api/state` → `{vehicle, environment, telemetry}` snapshot.
+- Endpoints implemented in Phase 4:
+  - `GET /api/state` → state snapshot (shape extended in Phase 5, see below).
   - `POST /api/reset` → resets HAL, returns the resulting snapshot.
   - `POST /api/scenario/set {vehicle_speed_kmh?, outside_temp_c?}` → token
     required.
   - `POST /api/secure/chat {prompt}` → delegates to `SecureSDKCore`.
+
+### Phase 5: WebSocket telemetry
+
+- **`app/server/ws_manager.py`** (`ConnectionManager`, module-level singleton
+  `manager`): tracks active `WebSocket` connections and broadcasts messages
+  to all of them. Deliberately has **no** knowledge of HAL, metrics, or any
+  business logic — it only stores connections and pushes pre-built dicts.
+  This keeps it dependency-free so both `routes_common.py` (which owns the
+  `/ws/telemetry` endpoint) and `main.py` (which owns the broadcast loop)
+  can import it without a circular import.
+  - `connect(websocket)`: accepts and registers.
+  - `disconnect(websocket)`: removes if present (idempotent).
+  - `broadcast(message)`: iterates a **copy** of the connection list (the
+    live list is mutated by `disconnect()`, which would otherwise corrupt an
+    in-progress iteration); a send failure (e.g. an abrupt/ungraceful client
+    disconnect) is caught and treated as a disconnect rather than
+    propagating and killing the broadcast loop for all other clients.
+- **`build_state_snapshot(metrics: dict) -> dict`** (`routes_common.py`,
+  public — renamed from the Phase 4 private `_state_snapshot()`): now also
+  includes a `"metrics"` key, so `GET /api/state`, `POST /api/reset`,
+  `POST /api/scenario/set`, and the WS broadcast loop all share one single
+  source of truth for the snapshot shape — REST and WS must never diverge.
+  Final shape: `{vehicle, environment, telemetry, metrics}`.
+- **`GET /ws/telemetry`** (`routes_common.py`): accepts the connection via
+  `manager.connect()`, then blocks on `receive_text()` in a loop purely to
+  detect disconnection (`WebSocketDisconnect`) — this is a push-only
+  channel, the server never expects client messages.
+- **Telemetry loop** (`app/server/main.py`, `_telemetry_loop`): a background
+  `asyncio.Task` created in `lifespan` startup, cancelled (and awaited,
+  suppressing `CancelledError`) in `lifespan` shutdown. Every
+  `TELEMETRY_INTERVAL_S` (1.0 s) it broadcasts a fresh snapshot — but
+  **skips building/broadcasting entirely if `manager.active_connections` is
+  empty**, to avoid needless `psutil` telemetry reads on the Pi when no
+  dashboard is open.
+- **Metrics**: `app.state.metrics = {"secure": {"allowed": 0, "blocked": 0},
+  "vulnerable": {"allowed": 0, "blocked": 0}}`, initialized once in
+  `lifespan` startup as plain in-memory counters (not derived by scanning the
+  audit log — cheaper, and the audit log's purpose is tamper-evident
+  forensics, not a live dashboard feed). `routes_secure.py` increments
+  `metrics["secure"]["allowed"]` or `["blocked"]` once per `/api/secure/chat`
+  call, based on `result.verdict`. The `vulnerable` counters are pre-declared
+  now (matching the final payload shape) but nothing increments them until
+  Phase 7.
+- **Race-condition analysis (considered, discarded)**: whether
+  `build_state_snapshot()` needs its own HAL lock/deep-copy accessor to avoid
+  reading mid-mutation state concurrently with `apply_action()`. Concluded
+  unnecessary: neither function contains an internal `await` point, so
+  Python's single-threaded cooperative asyncio scheduling guarantees each
+  runs to completion without interleaving.
+- **Validated behavior**: WS client receives snapshots at ~1 s cadence with
+  the `{vehicle, environment, telemetry, metrics}` shape; an abrupt
+  (non-graceful) client disconnect is caught by `broadcast()`'s try/except
+  and removed from `active_connections` without crashing the server or
+  affecting other connections; `/api/secure/chat` calls are reflected in
+  `metrics.secure` in the next broadcast tick (i.e. eventually consistent
+  within ~1 s, not synchronously pushed on every action — acceptable for a
+  dashboard use case).
 
 
