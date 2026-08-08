@@ -296,6 +296,40 @@ release simply ships with the switch off.
   history survives page reloads, matching the explicit requirement that
   these traces double as raw material for a future automated test bench.
 
+## 3.4-ter. Audit visibility panel (Phase 8)
+
+`AuditLog` (§3.4) has existed since Phase 4/5 as a write-only, tamper-evident
+record — nothing ever read it back. Phase 8 adds a **read-only, always-on**
+dashboard panel so every attempt (blocked or allowed, either pipeline) is
+visible with its verdict and chained hash, without weakening the log's
+append-only guarantees:
+
+- **`AuditLog.read_last(limit: int) -> list[dict]`** (new method,
+  `app/core/audit_log.py`): reads the file under the same `asyncio.Lock`
+  used by `append()`, slices the last `limit` lines, and returns them
+  newest-first. Mirrors `DebugTraceLog.read_last()` exactly. Purely
+  additive — does not touch `append()` or `verify_chain()`.
+- **`GET /api/audit/entries?limit=N`** and **`GET /api/audit/verify`**
+  (`app/server/routes_common.py`), both token-gated
+  (`Depends(_verify_sdk_token)`) but, unlike `GET /api/debug/traces`,
+  **never gated by `SDK_DEBUG_MODE`** — the audit log is a production
+  feature, not a developer tool, so its visibility endpoints are always
+  available to any authenticated caller. `/api/audit/verify` simply returns
+  `{"valid": bool}` from the existing `verify_chain()`.
+- **Frontend**: a prominent "Auditoría" button in the dashboard header (next
+  to Reset, not tucked into the Admin/Debug tab) opens a modal overlay
+  (`#audit-modal` in `frontend/index.html`) listing recent entries — each
+  rendered as a compact card with `seq`, timestamp, a `[secure]`/
+  `[vulnerable]` mode badge, a colored verdict (`ALLOWED`/`BLOCKED`),
+  `action`/`error_code`, a truncated `trace_id`, and truncated
+  `entry_hash`/`prev_hash` so the chain linkage is visible at a glance. A
+  "Verificar cadena" button calls `/api/audit/verify` on demand and shows
+  `Cadena OK` / `Cadena ROTA`. Deliberately the opposite placement choice
+  from the Admin/Debug tab (§3.4-bis, `SDK_DEBUG_MODE`-gated, developer-only,
+  intentionally unobtrusive): the audit panel is a production
+  accountability feature meant to be discoverable, so it gets its own
+  always-visible header button.
+
 ## 3.2. Vulnerable pipeline (`app/server/routes_vulnerable.py`, Phase 7)
 
 `POST /api/vulnerable/chat` exists purely as a controlled, side-by-side
@@ -573,8 +607,11 @@ router (`routes_vulnerable.router`) alongside the secure one.
   mirrors the existing secure one, both fed from the same `GET /api/state`
   snapshot (`metrics.vulnerable`).
 - **Debug-trace refresh guard**: the Admin/Debug tab's auto-refresh after a
-  chat submission (§3.4-bis) now only fires for secure-mode submissions,
-  since the vulnerable endpoint never produces a trace.
+  chat submission (§3.4-bis) fires for submissions from either pipeline —
+  the vulnerable endpoint gained its own debug-trace instrumentation (see
+  the addendum in `docs/phases/phase-7.md`), tagged `pipeline="vulnerable"`
+  so both pipelines' traces coexist in `debug_trace.jsonl` and are
+  distinguished by a `[SEGURO]`/`[VULNERABLE]` badge in the tab.
 - **Validated on-device** (with `SDK_DEBUG_MODE=true`, so every attempt is
   recorded for audit): `POST /api/vulnerable/chat` succeeds with no
   `X-SDK-Token` at all; a benign prompt with no DSL catalog guidance often
@@ -585,4 +622,23 @@ router (`routes_vulnerable.router`) alongside the secure one.
   km/h on `/api/vulnerable/chat`; `metrics.secure`/`metrics.vulnerable` and
   `logs/audit.log` entries (tagged `mode="secure"`/`"vulnerable"`) were
   confirmed consistent with each test's outcome.
+
+### Phase 8: Audit visibility panel
+
+- **`AuditLog.read_last()`** (`app/core/audit_log.py`) and two new
+  always-available, token-gated endpoints — `GET /api/audit/entries` and
+  `GET /api/audit/verify` (`app/server/routes_common.py`) — as described in
+  §3.4-ter above.
+- **Frontend**: `#audit-open-btn` header button + `#audit-modal` overlay
+  (`frontend/index.html`); `renderAuditEntry()`, `fetchAuditEntries()`,
+  `fetchVerifyChain()`, `initAuditModal()` (`frontend/js/dashboard.js`)
+  render entries and wire the open/close/refresh/verify controls.
+- **Validated on-device**: `GET /api/audit/entries` returns `401` with no
+  token and the expected entry list (with correctly chained
+  `entry_hash`/`prev_hash`) with a valid token; `GET /api/audit/verify`
+  returned `{"valid": true}` against the live `logs/audit.log`. In the
+  browser, the "Auditoría" button opens the modal, entries from both
+  `secure` and `vulnerable` pipelines render with the correct mode badge
+  and verdict color, "Verificar cadena" shows "Cadena OK", and the close
+  button/backdrop dismiss the modal correctly.
 

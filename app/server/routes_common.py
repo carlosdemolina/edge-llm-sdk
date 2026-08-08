@@ -106,3 +106,21 @@ async def get_debug_traces(request: Request, limit: int = 20) -> dict:
     traces = await debug_log.read_last(limit)
     return {"traces": traces}
 
+@router.get("/api/audit/entries", dependencies=[Depends(_verify_sdk_token)])
+async def get_audit_entries(request: Request, limit: int = 20) -> dict:
+    """Read-only view of `logs/audit.log` for the dashboard's Auditoría
+    panel (Phase 8). Unlike `/api/debug/traces`, this is always available —
+    `AuditLog` is a production security control, not a `SDK_DEBUG_MODE`-gated
+    developer tool — so it never 404s regardless of debug mode.
+    """
+    entries = await request.app.state.audit_log.read_last(limit)
+    return {"entries": entries}
+
+
+@router.get("/api/audit/verify", dependencies=[Depends(_verify_sdk_token)])
+async def verify_audit_chain(request: Request) -> dict:
+    """Recomputes every entry's HMAC and checks hash-chain continuity from
+    genesis (see `AuditLog.verify_chain()`), so the dashboard can show the
+    log's tamper-evident integrity status without a manual CLI check.
+    """
+    return {"valid": request.app.state.audit_log.verify_chain()}

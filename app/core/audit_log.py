@@ -113,3 +113,21 @@ class AuditLog:
                 expected_prev_hash = stored_hash
 
         return True
+
+    async def read_last(self, limit: int) -> list[dict]:
+        """Return up to `limit` most recent entries, newest first.
+
+        Read-only, developer-tool-style accessor for the dashboard's
+        Auditoría panel (Phase 8) — does not affect `verify_chain()` or the
+        append-only write path in any way.
+        """
+        async with self._lock:
+            if not self._path.exists():
+                return []
+            with self._path.open("r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+
+        selected = lines[-limit:] if limit > 0 else lines
+        entries = [json.loads(line) for line in selected]
+        entries.reverse()
+        return entries

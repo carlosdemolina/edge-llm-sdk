@@ -400,6 +400,109 @@ async function initDebugSection() {
   }
 }
 
+/**
+ * Auditoría modal (Phase 8) — read-only view of the tamper-evident
+ * `audit.log`, a production security feature (unlike the Admin/Debug
+ * section above), so it is always reachable from the header, never gated
+ * by SDK_DEBUG_MODE. Both endpoints require X-SDK-Token.
+ */
+function renderAuditEntry(entry) {
+  const verdictClass = entry.verdict === "BLOCKED" ? "text-red-300" : "text-emerald-300";
+  const modeClass = entry.mode === "vulnerable" ? "text-red-400" : "text-sky-300";
+
+  const row = document.createElement("div");
+  row.className = "bg-slate-700 rounded p-2 font-mono text-xs space-y-1";
+
+  const line1 = document.createElement("div");
+  line1.className = "flex justify-between gap-2";
+  line1.innerHTML =
+    `<span>#${entry.seq ?? "—"} · ${entry.timestamp || "—"} · [<span class="${modeClass}">${entry.mode || "—"}</span>]</span>` +
+    `<span class="${verdictClass}">${entry.verdict || "—"}</span>`;
+
+  const line2 = document.createElement("div");
+  line2.className = "text-slate-400";
+  line2.textContent =
+    `acción: ${entry.action || "—"} · error_code: ${entry.error_code || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}`;
+
+  const line3 = document.createElement("div");
+  line3.className = "text-slate-500 break-all";
+  line3.textContent =
+    `hash: ${(entry.entry_hash || "").slice(0, 16)}… ← prev: ${(entry.prev_hash || "").slice(0, 16)}…`;
+
+  row.appendChild(line1);
+  row.appendChild(line2);
+  row.appendChild(line3);
+  return row;
+}
+
+async function fetchAuditEntries() {
+  const container = document.getElementById("audit-entries-list");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/audit/entries?limit=20", {
+      headers: { "X-SDK-Token": getToken() },
+    });
+    if (!res.ok) {
+      container.innerHTML = `<p class="text-red-400">No se pudo cargar el registro (HTTP ${res.status}).</p>`;
+      return;
+    }
+    const data = await res.json();
+    container.innerHTML = "";
+    for (const entry of data.entries) {
+      container.appendChild(renderAuditEntry(entry));
+    }
+  } catch (err) {
+    console.error("dashboard: failed to fetch audit entries", err);
+  }
+}
+
+async function fetchVerifyChain() {
+  const statusEl = document.getElementById("audit-verify-status");
+  if (!statusEl) return;
+
+  statusEl.textContent = "Verificando…";
+  statusEl.className = "font-mono text-xs text-slate-400";
+  try {
+    const res = await fetch("/api/audit/verify", {
+      headers: { "X-SDK-Token": getToken() },
+    });
+    if (!res.ok) {
+      statusEl.textContent = `Error (HTTP ${res.status})`;
+      statusEl.className = "font-mono text-xs text-red-400";
+      return;
+    }
+    const { valid } = await res.json();
+    statusEl.textContent = valid ? "Cadena OK" : "Cadena ROTA";
+    statusEl.className = `font-mono text-xs ${valid ? "text-emerald-300" : "text-red-400"}`;
+  } catch (err) {
+    console.error("dashboard: failed to verify audit chain", err);
+    statusEl.textContent = "Error de red";
+    statusEl.className = "font-mono text-xs text-red-400";
+  }
+}
+
+function initAuditModal() {
+  const modal = document.getElementById("audit-modal");
+  const openBtn = document.getElementById("audit-open-btn");
+  const closeBtn = document.getElementById("audit-close-btn");
+  const refreshBtn = document.getElementById("audit-refresh-btn");
+  const verifyBtn = document.getElementById("audit-verify-btn");
+  if (!modal || !openBtn || !closeBtn || !refreshBtn || !verifyBtn) return;
+
+  openBtn.addEventListener("click", () => {
+    modal.classList.remove("hidden");
+    document.getElementById("audit-verify-status").textContent = "";
+    fetchAuditEntries();
+  });
+  closeBtn.addEventListener("click", () => modal.classList.add("hidden"));
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) modal.classList.add("hidden");
+  });
+  refreshBtn.addEventListener("click", fetchAuditEntries);
+  verifyBtn.addEventListener("click", fetchVerifyChain);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initTokenField();
 
@@ -407,6 +510,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("scenario-form").addEventListener("submit", handleScenarioSubmit);
   document.getElementById("chat-form").addEventListener("submit", handleChatSubmit);
   initVulnerableModeToggle();
+  initAuditModal();
 
   fetchInitialState();
   connectTelemetry(renderState, renderWsStatus);
