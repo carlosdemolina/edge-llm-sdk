@@ -243,6 +243,8 @@ contrasted explicitly with §3.4's `AuditLog`:
 | Integrity | HMAC hash-chained, tamper-evident | No chain — a plain JSONL append log |
 | Enabled | Always | Only when `SDK_DEBUG_MODE=true` (off by default); `logs/*` is gitignored either way |
 | Exposed to | Nothing reads it back over HTTP | `GET /api/debug/traces` (token-gated), rendered in the dashboard's Admin/Debug tab |
+| Clearable | No — `AuditLog` has no delete/clear endpoint by design (tamper-evident chain must never be truncated) | Yes — `DELETE /api/debug/traces` (token-gated, 404 when debug mode is off) truncates `logs/debug_trace.jsonl` via `DebugTraceLog.clear()`; safe since this file carries no integrity chain and no production role. Frontend gates it behind a `confirm()` dialog since it's destructive and irreversible. |
+
 
 Rationale for a coarse, uniform `error_code` in the chat's own response
 (§2.5) still holds unchanged: `ActionResult.message` never reveals which

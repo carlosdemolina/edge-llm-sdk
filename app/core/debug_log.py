@@ -43,3 +43,15 @@ class DebugTraceLog:
         entries = [json.loads(line) for line in selected]
         entries.reverse()
         return entries
+
+    async def clear(self) -> None:
+        """Erase the entire debug trace history.
+
+        Safe to expose destructively: unlike `AuditLog`, this file is a
+        developer tool with no integrity chain and no production role, so
+        truncating it has no security implications — it only discards
+        plaintext prompts/LLM output kept for local iteration.
+        """
+        async with self._lock:
+            if self._path.exists():
+                self._path.write_text("", encoding="utf-8")

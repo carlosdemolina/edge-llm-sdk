@@ -385,6 +385,25 @@ async function fetchDebugTraces() {
   }
 }
 
+async function clearDebugTraces() {
+  if (!confirm("¿Borrar todo el histórico de debug? Esta acción no se puede deshacer.")) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/debug/traces", {
+      method: "DELETE",
+      headers: { "X-SDK-Token": getToken() },
+    });
+    if (!res.ok) {
+      alert(`No se pudo borrar el histórico (HTTP ${res.status}).`);
+      return;
+    }
+    fetchDebugTraces();
+  } catch (err) {
+    console.error("dashboard: failed to clear debug traces", err);
+  }
+}
+
 async function initDebugSection() {
   try {
     const res = await fetch("/api/debug/status");
@@ -394,6 +413,7 @@ async function initDebugSection() {
 
     document.getElementById("debug-section").classList.remove("hidden");
     document.getElementById("debug-refresh-btn").addEventListener("click", fetchDebugTraces);
+    document.getElementById("debug-clear-btn").addEventListener("click", clearDebugTraces);
     fetchDebugTraces();
   } catch (err) {
     console.error("dashboard: failed to check debug status", err);

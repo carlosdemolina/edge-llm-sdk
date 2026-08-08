@@ -106,6 +106,22 @@ async def get_debug_traces(request: Request, limit: int = 20) -> dict:
     traces = await debug_log.read_last(limit)
     return {"traces": traces}
 
+
+@router.delete("/api/debug/traces", dependencies=[Depends(_verify_sdk_token)])
+async def clear_debug_traces(request: Request) -> dict:
+    """Developer-only endpoint: erases the debug trace history.
+
+    Only ever touches `DebugTraceLog` (`logs/debug_trace.jsonl`), never
+    `AuditLog` (`logs/audit.log`) \u2014 the audit log is a production,
+    tamper-evident record and has no equivalent "clear" endpoint by design.
+    404s when `SDK_DEBUG_MODE` is off, same as `GET /api/debug/traces`.
+    """
+    debug_log = request.app.state.debug_log
+    if debug_log is None:
+        raise HTTPException(status_code=404, detail="Debug mode is disabled on this server")
+    await debug_log.clear()
+    return {"cleared": True}
+
 @router.get("/api/audit/entries", dependencies=[Depends(_verify_sdk_token)])
 async def get_audit_entries(request: Request, limit: int = 20) -> dict:
     """Read-only view of `logs/audit.log` for the dashboard's Auditoría

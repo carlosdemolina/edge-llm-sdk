@@ -72,3 +72,28 @@ chose a prominent header button + modal overlay (not a separate page, not
 folded into the intentionally-obscure Admin/Debug section), since the audit
 panel is meant to demonstrate the system's own accountability, not to be a
 developer-only tool.
+
+## Addendum: clearable debug history
+
+Per user request, added a "Borrar histórico" button next to the Admin/Debug
+tab's existing "Refrescar histórico" — deliberately **only** for
+`DebugTraceLog`, never for `AuditLog`:
+
+- **`app/core/debug_log.py`**: new `clear()` async method truncates
+  `logs/debug_trace.jsonl` under the existing lock. Safe to expose
+  destructively since this log has no integrity chain and no production
+  role (unlike `AuditLog`, which has no equivalent method by design).
+- **`app/server/routes_common.py`**: `DELETE /api/debug/traces`
+  (token-gated, same `404`-when-debug-mode-off behavior as `GET
+  /api/debug/traces`).
+- **`frontend/index.html`**: `#debug-clear-btn` button next to
+  `#debug-refresh-btn`.
+- **`frontend/js/dashboard.js`**: `clearDebugTraces()` gates the call
+  behind a native `confirm()` dialog (irreversible action) before calling
+  `DELETE /api/debug/traces` and refreshing the list.
+- **Validated on-device**: `DELETE` with no token → `401`; with a valid
+  token, entry count dropped from 5 → 0 while `GET /api/audit/verify`
+  still returned `{"valid": true}` (audit chain untouched). In the browser,
+  clicking "Borrar histórico" shows the confirm dialog; accepting clears
+  the list, dismissing leaves it untouched.
+
