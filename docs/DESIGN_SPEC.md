@@ -259,7 +259,12 @@ release simply ships with the switch off.
   `schema_validation`, `dsl_whitelist_range`, `canary_leak_check`,
   `contextual_policy`, `execution`), each with `status`
   (`passed`/`blocked`/`skipped`), an optional `detail` string, and
-  `duration_ms` timed since the previous stage.
+  `duration_ms` timed since the previous stage. `routes_vulnerable.py`
+  (Phase 7) reuses the exact same stage names, marking the ones it
+  deliberately does not run as `skipped` (rather than omitting them), so
+  both pipelines' stage lists line up 1:1 for direct comparison; it also
+  adds one extra stage, `type_check`, for its lightweight `isinstance`
+  check (in place of `schema_validation`, which it always marks `skipped`).
 - **`DebugTrace`**: the full per-request trace — `stages`, the final
   encapsulated `final_prompt` sent to Ollama, the LLM's `raw_llm_output`,
   the `parsed_llm_action` (pre-Pydantic-validation JSON), `ollama_metrics`
@@ -268,8 +273,10 @@ release simply ships with the switch off.
   present in every non-streaming `/api/generate` response at no extra cost),
   `sdk_total_duration_ms` (the whole `handle_request()` call, so the
   pipeline's own overhead can be separated from Ollama's inference time),
-  and a CPU/RAM snapshot (`psutil`) taken at the very start and very end of
-  the request.
+  a CPU/RAM snapshot (`psutil`) taken at the very start and very end of the
+  request, and `pipeline` (`"secure"` | `"vulnerable"`, Phase 7) so the
+  Admin/Debug tab and `debug_trace.jsonl` can distinguish and compare
+  entries from either pipeline in the same file.
 - **Known limitation, documented rather than engineered around**:
   `psutil.cpu_percent(interval=None)` measures usage *since the last call
   anywhere in the process* — the Phase 5 telemetry broadcast loop also
@@ -289,16 +296,84 @@ release simply ships with the switch off.
   history survives page reloads, matching the explicit requirement that
   these traces double as raw material for a future automated test bench.
 
-## 3.2, 5.x–6.x
+## 3.2. Vulnerable pipeline (`app/server/routes_vulnerable.py`, Phase 7)
 
-*(pending — will be added as each phase is implemented; §3.2, the vulnerable
-pipeline, is intentionally out of scope for Phase 3)*
+`POST /api/vulnerable/chat` exists purely as a controlled, side-by-side
+counter-example to `SecureSDKCore` — a quantifiable "before/after" for the
+TFM's case study, never a code path meant to be hardened later. It reuses
+the same `hal`, the same `OllamaClient` (still serialized behind its shared
+`asyncio.Semaphore(1)`), and the same `AuditLog` (tagged `mode="vulnerable"`)
+as the secure pipeline, but wires them together with almost none of
+`SecureSDKCore`'s defense layers:
 
-## 3.5. Server (`app/server/main.py`, Phases 4–5 scope)
+| Layer | Secure (`sdk_core.py`) | Vulnerable (`routes_vulnerable.py`) |
+|---|---|---|
+| Auth | `hmac.compare_digest` on `X-SDK-Token`, step 0 | `X-SDK-Token` read but **never checked** |
+| Rate limiting | cooldown gate (0-bis) | none |
+| Ingress sanitization | deny-patterns + length cap | none |
+| System prompt | full DSL catalog description + anti-fusion delimiters | one line, **no** action catalog at all |
+| Inference sampling | forced deterministic (`temperature=0`, `top_k=1`, `top_p=0.1`) | Ollama's own documented defaults (`temperature=0.8`, `top_k=40`, `top_p=0.9`) — also demonstrates non-deterministic output |
+| Egress schema | strict `LLMAction` (Pydantic, `extra="forbid"`) | only checks `action` is `str` and `params` is `dict` |
+| DSL whitelist/range | reject on any mismatch | none — calls `hal.apply_action()` directly |
+| Canary leak check | blocks if canary appears in raw output | **never checked** — if leaked, it flows straight into the response `message` |
+| Contextual/state policy (5.g, speed lockout) | enforced | none |
+| HAL type-check/clamp | applies (defense in depth) | still applies — stability net, not a security control |
+
+- **Response shape reuse (deliberate simplification)**: the endpoint
+  returns the same `ActionResult`/`ErrorCode` shape as the secure pipeline,
+  so the frontend's chat-rendering code is identical between modes. This is
+  a simplification, not a claim of equivalence: a `BLOCKED` verdict here
+  only ever reflects a technical failure (unparseable JSON, timeout, an
+  action name the HAL doesn't implement) — there is no deliberate security
+  check in this module that could "block" anything on purpose. The
+  `@SECURITY_VIOLATION@` message prefix is reused verbatim for the same
+  reason (simplicity over precision).
+- **Canary/`reasoning` deliberately exposed on success**: unlike the secure
+  pipeline (which never surfaces the LLM's `reasoning`), a successful
+  vulnerable response echoes the model's own `reasoning` (or, failing that,
+  the raw output text) back in `message` — this is what makes a canary leak
+  or a successful prompt injection *visible* in the chat, which is the point
+  of the Red Teaming comparison (§3.7/Phase 9).
+- **No DSL catalog in the system prompt — empirical finding**: because the
+  vulnerable prompt never lists valid actions (§3.2 of
+  `Implementacion_Capitulo6.md` specifies this minimal prompt deliberately),
+  the model frequently invents action names that don't exist in `hal.py`
+  (e.g. `open_front_left_sleeper`, `open_sunroof`) rather than the real
+  `set_window`. The HAL's fixed, hardcoded action set means this is
+  rejected as `unknown_action` regardless — i.e. even the *vulnerable* mode
+  cannot make the LLM execute an action the HAL doesn't implement. When a
+  prompt names the real action explicitly (a plausible attacker who already
+  knows the internal schema, e.g. from reverse engineering or leaked docs),
+  the bypass is real and reproducible: validated on-device by setting
+  `vehicle_speed_kmh=180` via `/api/scenario/set` and sending a prompt that
+  asks for `{"action": "set_window", ...}` — the secure pipeline blocks it
+  (`POLICY_VIOLATION`, stage `contextual_policy`/`speed_lockout`, or earlier
+  at `sanitization` if the prompt also matches an injection deny-pattern),
+  while the vulnerable endpoint executes it and the HAL state confirms all
+  four windows open to 100% at 180 km/h. This distinction (fixed action
+  space vs. semantic/contextual validation) is worth keeping explicit for
+  Phase 9's Red Teaming catalog design.
+- **Debug-trace instrumentation, tagged `pipeline="vulnerable"`**:
+  `routes_vulnerable.py` duplicates the same accumulator/mark-stage/finalize
+  pattern used by `SecureSDKCore` (rather than sharing an instance, since
+  this module is function-based, not a class) and writes to the *same*
+  `DebugTraceLog`/`logs/debug_trace.jsonl` as the secure pipeline, only when
+  `SDK_DEBUG_MODE=true`. Every stage the secure pipeline runs that this one
+  intentionally skips (`authentication`, `rate_limit_cooldown`,
+  `sanitization`, `prompt_encapsulation`, `schema_validation`,
+  `dsl_whitelist_range`, `canary_leak_check`, `contextual_policy`) is still
+  recorded, with `status="skipped"` and a `detail` explaining why — this
+  lets the Admin/Debug tab and any future test-bench tooling compare both
+  pipelines' traces stage-by-stage, rather than only comparing final
+  verdicts. This is purely a developer/observability aid, gated the same
+  way as the secure pipeline's tracing (`SDK_DEBUG_MODE`, off by default);
+  it adds no security behavior of its own.
+
+## 3.5. Server (`app/server/main.py`, Phases 4–5, 7 scope)
 
 Phase 4 implemented the REST endpoints. Phase 5 (below) adds the WebSocket
-telemetry broadcast loop on top of them. No vulnerable-mode router (Phase 7)
-is mounted yet.
+telemetry broadcast loop on top of them. Phase 7 mounts the vulnerable-mode
+router (`routes_vulnerable.router`) alongside the secure one.
 
 - **Lifecycle**: FastAPI's `lifespan` async context manager (not the
   deprecated `@app.on_event`) creates a single `OllamaClient`, calls
@@ -402,9 +477,8 @@ is mounted yet.
   audit log — cheaper, and the audit log's purpose is tamper-evident
   forensics, not a live dashboard feed). `routes_secure.py` increments
   `metrics["secure"]["allowed"]` or `["blocked"]` once per `/api/secure/chat`
-  call, based on `result.verdict`. The `vulnerable` counters are pre-declared
-  now (matching the final payload shape) but nothing increments them until
-  Phase 7.
+  call, based on `result.verdict`. `routes_vulnerable.py` increments the
+  `vulnerable` counters the same way (Phase 7).
 - **Race-condition analysis (considered, discarded)**: whether
   `build_state_snapshot()` needs its own HAL lock/deep-copy accessor to avoid
   reading mid-mutation state concurrently with `apply_action()`. Concluded
@@ -480,4 +554,35 @@ is mounted yet.
   surfaces a clear inline message for both the chat and scenario forms
   (`401`/`UNAUTHENTICATED` are never silently swallowed); Reset restores all
   cards to their default values.
+
+### Phase 7: Vulnerable mode + toggle
+
+- **`app/server/routes_vulnerable.py`** (new): implements `POST
+  /api/vulnerable/chat` as described in §3.2 above. Mounted in `main.py` via
+  `app.include_router(routes_vulnerable.router)`, alongside
+  `routes_common`/`routes_secure`.
+- **Frontend toggle** (`frontend/index.html` + `dashboard.js`): a checkbox
+  (`#vulnerable-mode-toggle`) in the chat panel header switches
+  `handleChatSubmit()` between `/api/secure/chat` (token attached) and
+  `/api/vulnerable/chat` (token header omitted entirely, not sent empty, to
+  simulate a caller with no credentials at all). The panel title and a red
+  warning banner (`#vulnerable-mode-warning`) update via a `change` listener
+  so the active mode is always visually unambiguous. Chat history entries
+  are tagged with their mode and rendered with a `[VULNERABLE]` prefix.
+- **Metrics panel**: a second `metrics-vulnerable-allowed/blocked` block
+  mirrors the existing secure one, both fed from the same `GET /api/state`
+  snapshot (`metrics.vulnerable`).
+- **Debug-trace refresh guard**: the Admin/Debug tab's auto-refresh after a
+  chat submission (§3.4-bis) now only fires for secure-mode submissions,
+  since the vulnerable endpoint never produces a trace.
+- **Validated on-device** (with `SDK_DEBUG_MODE=true`, so every attempt is
+  recorded for audit): `POST /api/vulnerable/chat` succeeds with no
+  `X-SDK-Token` at all; a benign prompt with no DSL catalog guidance often
+  yields a hallucinated action name rejected by the HAL as `unknown_action`;
+  the explicit speed-lockout bypass (see §3.2) reproduced the expected
+  contrast — `BLOCKED`/`POLICY_VIOLATION` on `/api/secure/chat` vs.
+  `ALLOWED` with the HAL's window state actually mutated to 100% at 180
+  km/h on `/api/vulnerable/chat`; `metrics.secure`/`metrics.vulnerable` and
+  `logs/audit.log` entries (tagged `mode="secure"`/`"vulnerable"`) were
+  confirmed consistent with each test's outcome.
 

@@ -91,9 +91,11 @@ function renderState(state) {
   setText("cpu-temp", telemetry.cpu_temp_c !== null ? fmtTemp(telemetry.cpu_temp_c) : "N/A");
   setText("telemetry-timestamp", telemetry.timestamp || "—");
 
-  // Metrics (secure mode only for now — vulnerable mode arrives in Phase 7)
+  // Metrics (both modes, side by side for comparison — Phase 7)
   setText("metrics-secure-allowed", String(metrics.secure.allowed));
   setText("metrics-secure-blocked", String(metrics.secure.blocked));
+  setText("metrics-vulnerable-allowed", String(metrics.vulnerable.allowed));
+  setText("metrics-vulnerable-blocked", String(metrics.vulnerable.blocked));
 }
 
 function renderChatHistory() {
@@ -108,7 +110,8 @@ function renderChatHistory() {
 
     const promptEl = document.createElement("div");
     promptEl.className = "text-slate-300 text-xs mb-1";
-    promptEl.textContent = `» ${entry.prompt}`;
+    const modeTag = entry.mode === "vulnerable" ? "[VULNERABLE] " : "";
+    promptEl.textContent = `${modeTag}» ${entry.prompt}`;
 
     const resultEl = document.createElement("div");
     resultEl.className = `font-mono text-xs ${isAllowed ? "text-emerald-300" : "text-red-300"}`;
@@ -185,6 +188,11 @@ async function handleScenarioSubmit(event) {
   }
 }
 
+function isVulnerableMode() {
+  const toggle = document.getElementById("vulnerable-mode-toggle");
+  return !!(toggle && toggle.checked);
+}
+
 async function handleChatSubmit(event) {
   event.preventDefault();
   const input = document.getElementById("chat-input");
@@ -194,22 +202,28 @@ async function handleChatSubmit(event) {
   const prompt = input.value.trim();
   if (!prompt) return;
 
+  const vulnerable = isVulnerableMode();
+  const endpoint = vulnerable ? "/api/vulnerable/chat" : "/api/secure/chat";
+  // The vulnerable endpoint ignores X-SDK-Token entirely; the toggle omits
+  // it here too, to simulate a caller with no credentials at all — never
+  // just an empty string, which would still be "sending" the header.
+  const headers = { "Content-Type": "application/json" };
+  if (!vulnerable) headers["X-SDK-Token"] = getToken();
+
   sendBtn.disabled = true;
   pendingEl.classList.remove("hidden");
 
   try {
-    const res = await fetch("/api/secure/chat", {
+    const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-SDK-Token": getToken(),
-      },
+      headers,
       body: JSON.stringify({ prompt }),
     });
 
     const result = await res.json();
     chatHistory.push({
       prompt,
+      mode: vulnerable ? "vulnerable" : "secure",
       verdict: result.verdict,
       message: result.message,
       error_code: result.error_code,
@@ -218,7 +232,8 @@ async function handleChatSubmit(event) {
     input.value = "";
 
     // If the Admin/Debug tab is visible, refresh its history so the trace
-    // of this very request shows up immediately.
+    // of this very request shows up immediately. Both pipelines now produce
+    // traces (tagged entry.pipeline), so this applies to both modes.
     const debugSection = document.getElementById("debug-section");
     if (debugSection && !debugSection.classList.contains("hidden")) {
       fetchDebugTraces();
@@ -227,6 +242,7 @@ async function handleChatSubmit(event) {
     console.error("dashboard: failed to send chat prompt", err);
     chatHistory.push({
       prompt,
+      mode: vulnerable ? "vulnerable" : "secure",
       verdict: "BLOCKED",
       message: "Error de red al contactar el servidor.",
       error_code: "INTERNAL_ERROR",
@@ -236,6 +252,22 @@ async function handleChatSubmit(event) {
     sendBtn.disabled = false;
     pendingEl.classList.add("hidden");
   }
+}
+
+function initVulnerableModeToggle() {
+  const toggle = document.getElementById("vulnerable-mode-toggle");
+  const title = document.getElementById("chat-panel-title");
+  const warning = document.getElementById("vulnerable-mode-warning");
+  const panel = document.getElementById("chat-panel");
+  if (!toggle || !title || !warning || !panel) return;
+
+  toggle.addEventListener("change", () => {
+    const vulnerable = toggle.checked;
+    title.textContent = vulnerable ? "Chat (pipeline vulnerable)" : "Chat (pipeline seguro)";
+    warning.classList.toggle("hidden", !vulnerable);
+    panel.classList.toggle("border", vulnerable);
+    panel.classList.toggle("border-red-700", vulnerable);
+  });
 }
 
 function initTokenField() {
@@ -275,6 +307,9 @@ function renderDebugTraceEntry(entry) {
   const totalMs = typeof entry.sdk_total_duration_ms === "number"
     ? `${entry.sdk_total_duration_ms.toFixed(0)} ms`
     : "—";
+  const isVulnerable = entry.pipeline === "vulnerable";
+  const pipelineLabel = isVulnerable ? "VULNERABLE" : "SEGURO";
+  const pipelineClass = isVulnerable ? "text-red-400" : "text-sky-300";
 
   const details = document.createElement("details");
   details.className = "bg-slate-700 rounded p-2";
@@ -282,7 +317,7 @@ function renderDebugTraceEntry(entry) {
   const summary = document.createElement("summary");
   summary.className = "cursor-pointer font-mono text-xs flex justify-between gap-2";
   summary.innerHTML =
-    `<span>${entry.timestamp || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}</span>` +
+    `<span>[<span class="${pipelineClass}">${pipelineLabel}</span>] ${entry.timestamp || "—"} · trace ${(entry.trace_id || "").slice(0, 8)}</span>` +
     `<span class="${outcomeClass}">${outcomeLabel} · ${totalMs}</span>`;
 
   const body = document.createElement("div");
@@ -371,6 +406,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reset-btn").addEventListener("click", handleReset);
   document.getElementById("scenario-form").addEventListener("submit", handleScenarioSubmit);
   document.getElementById("chat-form").addEventListener("submit", handleChatSubmit);
+  initVulnerableModeToggle();
 
   fetchInitialState();
   connectTelemetry(renderState, renderWsStatus);

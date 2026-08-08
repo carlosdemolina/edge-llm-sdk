@@ -1,7 +1,8 @@
 """FastAPI application entrypoint (see docs/DESIGN_SPEC.md §3.5).
 
 Phase 5 scope adds the WebSocket telemetry broadcast loop on top of Phase 4's
-REST endpoints. No vulnerable-mode router mounted yet (Phase 7).
+REST endpoints. Phase 7 adds the vulnerable-mode router alongside it, for a
+side-by-side secure/vulnerable comparison against the same HAL/audit log.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from app.core.debug_log import DebugTraceLog
 from app.core.sdk_core import SecureSDKCore
 from app.hal.hal import hal
 from app.llm.ollama_client import OllamaClient
-from app.server import routes_common, routes_secure
+from app.server import routes_common, routes_secure, routes_vulnerable
 from app.server.ws_manager import manager
 
 POLICIES_DIR = Path(__file__).resolve().parent.parent / "policies"
@@ -87,8 +88,6 @@ async def lifespan(app: FastAPI):
         debug_mode=SDK_DEBUG_MODE,
         debug_log=debug_log,
     )
-    # Vulnerable-mode counters are pre-declared even though nothing increments
-    # them until Phase 7, matching the final §3.5 metrics payload shape.
     app.state.metrics = {
         "secure": {"allowed": 0, "blocked": 0},
         "vulnerable": {"allowed": 0, "blocked": 0},
@@ -109,6 +108,7 @@ app = FastAPI(title="Edge LLM SDK — Vehicle IVC Prototype", lifespan=lifespan)
 
 app.include_router(routes_common.router)
 app.include_router(routes_secure.router)
+app.include_router(routes_vulnerable.router)
 
 # Registered last (Phase 6): a catch-all mount, so the explicit API/WS routes
 # above always take precedence over static file serving. Same-origin serving

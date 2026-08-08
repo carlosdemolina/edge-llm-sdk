@@ -220,6 +220,7 @@ class SecureSDKCore:
             cpu_percent_end=psutil.cpu_percent(interval=None),
             ram_percent_start=debug_ctx["ram_start"],
             ram_percent_end=psutil.virtual_memory().percent,
+            pipeline="secure",
         )
         if self._debug_log is not None:
             await self._debug_log.append(trace_id, trace)

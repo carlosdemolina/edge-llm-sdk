@@ -128,11 +128,29 @@
           <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Bloqueadas</span><span id="metrics-secure-blocked" class="font-mono">0</span></div>
         </div>
       </div>
+
+      <div class="border-t border-slate-700 pt-3">
+        <h3 class="text-sm text-amber-500 mb-1">Métricas (modo vulnerable)</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-emerald-900/40 rounded p-2 flex justify-between"><span>Permitidas</span><span id="metrics-vulnerable-allowed" class="font-mono">0</span></div>
+          <div class="bg-red-900/40 rounded p-2 flex justify-between"><span>Bloqueadas</span><span id="metrics-vulnerable-blocked" class="font-mono">0</span></div>
+        </div>
+      </div>
     </section>
 
     <!-- Chat panel -->
-    <section class="bg-slate-800 rounded-lg p-4 flex flex-col space-y-3 lg:h-[calc(100vh-8rem)]">
-      <h2 class="font-semibold text-slate-300 border-b border-slate-700 pb-2">Chat (pipeline seguro)</h2>
+    <section id="chat-panel" class="bg-slate-800 rounded-lg p-4 flex flex-col space-y-3 lg:h-[calc(100vh-8rem)]">
+      <div class="flex items-center justify-between border-b border-slate-700 pb-2">
+        <h2 id="chat-panel-title" class="font-semibold text-slate-300">Chat (pipeline seguro)</h2>
+        <label class="flex items-center gap-2 text-xs cursor-pointer select-none">
+          <span class="text-slate-400">Modo vulnerable</span>
+          <input id="vulnerable-mode-toggle" type="checkbox" class="accent-red-600 w-4 h-4" />
+        </label>
+      </div>
+
+      <p id="vulnerable-mode-warning" class="text-xs text-red-400 hidden">
+        Modo vulnerable activo: sin autenticación, sin sanitización, sin validación de whitelist/rangos/estado. Solo para fines demostrativos.
+      </p>
 
       <div id="chat-history" class="flex-1 overflow-y-auto space-y-2 text-sm pr-1"></div>
 

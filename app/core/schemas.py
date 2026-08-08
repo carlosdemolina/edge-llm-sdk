@@ -80,6 +80,9 @@ class DebugTrace:
     cpu_percent_end: float | None = None
     ram_percent_start: float | None = None
     ram_percent_end: float | None = None
+    pipeline: str = "secure"          # "secure" | "vulnerable" — lets the
+                                      # Admin/Debug tab and debug_trace.jsonl
+                                      # distinguish/compare both pipelines
 
 
 @dataclass
