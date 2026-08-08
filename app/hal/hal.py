@@ -1,7 +1,7 @@
 """Hardware Abstraction Layer (HAL) for the simulated vehicle ECU/IVC prototype.
 
 Three distinct state blocks with different trust boundaries (see
-Implementacion_Capitulo6.md §2.1):
+docs/DESIGN_SPEC.md §2.1):
 
 - VehicleState: actuators, mutable ONLY via `apply_action()` (DSL-whitelisted
   intents, invoked by the secure/vulnerable pipelines after the LLM response).
