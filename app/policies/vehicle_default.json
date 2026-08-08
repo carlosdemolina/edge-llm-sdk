@@ -1,1 +1,21 @@
-{}
+{
+  "policy_id": "vehicle-default",
+  "deadline_ms": 20000,
+  "rate_limit_cooldown_s": 2,
+  "sanitizer": {
+    "max_prompt_length": 2000,
+    "deny_patterns": [
+      "ignore.*instruction",
+      "ignora.*instrucci",
+      "system:",
+      "you are now",
+      "ahora eres",
+      "<\\|.*?\\|>",
+      "###\\s*(system|admin)"
+    ]
+  },
+  "contextual_rules": {
+    "speed_lockout_kmh": 30,
+    "locked_actions": ["set_window", "set_door_lock"]
+  }
+}

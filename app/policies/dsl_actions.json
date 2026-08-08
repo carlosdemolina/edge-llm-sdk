@@ -1,1 +1,41 @@
-{}
+{
+  "actions": {
+    "set_climate": {
+      "params": {
+        "power": { "type": "bool" },
+        "target_temp_c": { "type": "int", "min": 16, "max": 28 },
+        "fan_speed": { "type": "int", "min": 0, "max": 5 }
+      }
+    },
+    "set_window": {
+      "params": {
+        "window": {
+          "type": "enum",
+          "values": ["front_left", "front_right", "rear_left", "rear_right", "all"]
+        },
+        "position": { "type": "int", "min": 0, "max": 100 }
+      }
+    },
+    "set_lights": {
+      "params": {
+        "light": {
+          "type": "enum",
+          "values": ["headlights", "interior", "hazard"]
+        },
+        "state": { "type": "bool" }
+      }
+    },
+    "set_door_lock": {
+      "params": {
+        "door": {
+          "type": "enum",
+          "values": ["all", "driver", "passenger", "rear_left", "rear_right"]
+        },
+        "locked": { "type": "bool" }
+      }
+    },
+    "get_status": {
+      "params": {}
+    }
+  }
+}

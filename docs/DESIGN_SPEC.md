@@ -73,6 +73,166 @@ SystemTelemetry (real, read-only, Raspberry Pi hardware):
   constitute a new attack surface exposed to the model — its only purpose is
   to build reproducible Red Teaming scenarios.
 
-## 2.2 – 6.x
+## 3.3. `ollama_client.py`
 
-*(pending — will be added as each phase is implemented)*
+- Reused `httpx.AsyncClient` (never one per request).
+- Endpoint: `POST http://localhost:11434/api/generate`, `model: "llama3.2:latest"`
+  (real tag confirmed on-device via `ollama list`; underlying model is Llama 3.2,
+  3.2B parameters, Q4_K_M quantization), `stream: false` in prototype v1.
+- Parameters (`options`): `temperature`, `top_k`, `top_p`, plus `format: "json"`
+  when required.
+- Startup check (FastAPI `startup event`, wired in Phase 4): `GET /api/tags` to
+  confirm `llama3.2:latest` is downloaded; if missing, raise a clear error and
+  abort (fail-fast, never fail silently on the user's first chat).
+- Calls are serialized via `asyncio.Semaphore(1)` inside the client itself —
+  the Raspberry Pi can only run one inference at a time, and this must hold
+  regardless of which pipeline (secure or vulnerable) issues the call.
+- Timeouts are split by phase rather than a single uniform value:
+  `connect=5.0s` (fail fast if Ollama is unreachable/down) and `read=30.0s`
+  (the model can take 8-12s to warm up from idle on the Pi 5 before it starts
+  generating).
+
+## 2.2. DSL action catalog (`app/policies/dsl_actions.json`)
+
+A versioned, git-tracked whitelist of every action the LLM is allowed to
+request. Both the secure pipeline's validator and the prompt sent to the LLM
+are generated dynamically from this single source of truth — there is no
+duplicated/hand-maintained list elsewhere.
+
+```text
+actions:
+  set_climate:  { power: bool, target_temp_c: int[16,28], fan_speed: int[0,5] }
+  set_window:   { window: enum[front_left,front_right,rear_left,rear_right,all],
+                   position: int[0,100] }
+  set_lights:   { light: enum[headlights,interior,hazard], state: bool }
+  set_door_lock:{ door: enum[all,driver,passenger,rear_left,rear_right], locked: bool }
+  get_status:   {}
+```
+
+Deliberately **not** in the catalog: any action that controls vehicle speed,
+steering, or braking — the DSL only exposes comfort/infotainment actuators
+(least privilege by omission, not by runtime filtering).
+
+## 2.3. `LLMAction` schema (`app/core/schemas.py`)
+
+A strict Pydantic model the LLM's raw JSON output must conform to before any
+further processing:
+
+```text
+LLMAction (extra="forbid"):
+  action: str
+  params: dict[str, Any]
+  reasoning: str | None = None
+```
+
+`extra="forbid"` rejects any unexpected field outright — the LLM cannot smuggle
+additional instructions/data through extra JSON keys. `reasoning` is carried
+only for observability/debugging; it is never used to make an authorization
+decision.
+
+## 2.4. `Ctx` (`app/core/schemas.py`)
+
+A per-request context envelope, generated fresh inside
+`SecureSDKCore.handle_request()`:
+
+```text
+Ctx:
+  session_id: str        # generated once per SecureSDKCore instance
+  policy_id: str          # from the active policy bundle (vehicle_default.json)
+  trace_id: str           # generated at the very start of handle_request(),
+                            # before authentication, so early rejections are
+                            # audited too
+  deadline_ms: int        # from the active policy bundle; overrides the
+                            # Ollama client's default read timeout for this call
+  canary_token: str       # unique per request; injected into the prompt and
+                            # checked against the raw LLM output (§3.1 step 5.f)
+```
+
+## 2.5. `ErrorCode` (`app/core/schemas.py`)
+
+```text
+ErrorCode: UNAUTHENTICATED | POLICY_VIOLATION | INVALID_INPUT |
+           RESOURCE_LIMIT | INTERNAL_ERROR
+```
+
+Every `BLOCKED` `ActionResult` carries exactly one of these. The response
+message returned to the caller is `"@SECURITY_VIOLATION@ {error_code}"` — a
+deterministic, SDK-generated string, never the LLM's own `reasoning` text.
+
+## 3.1. Secure pipeline (`app/core/sdk_core.py`, `SecureSDKCore`)
+
+`SecureSDKCore` is **not** a module-level singleton (unlike `hal`): it is
+constructed via dependency injection (`hal`, `ollama_client`, `audit_log`,
+`sdk_token`, `dsl_catalog`, `policy`), holding only `_session_id` and
+`_last_request_ts` as internal mutable state.
+
+`handle_request(prompt, provided_token) -> ActionResult` pipeline steps:
+
+```text
+0.     Authentication — hmac.compare_digest(provided_token, sdk_token).
+0-bis. Rate-limit cooldown — time.monotonic() vs. policy["rate_limit_cooldown_s"].
+1.     Ctx creation (trace_id generated even earlier, at the top of the
+       method, so steps 0/0-bis can also be audited).
+2.     Ingress sanitization (app/core/sanitizer.py).
+3.     Structural prompt encapsulation: dynamically-generated DSL catalog
+       description + canary token instruction + anti-fusion delimiters
+       (`=== USER_INPUT_{trace_id} START/END ===`) wrapping the untrusted
+       user text.
+4.     Ollama call via the injected OllamaClient.generate(), with
+       ctx.deadline_ms overriding the client's default read timeout.
+5.a    Transport-level failure -> RESOURCE_LIMIT (timeout) or INTERNAL_ERROR.
+5.b    JSON parse, with one fallback attempt (extract the first balanced
+       `{...}` block) if strict `json.loads()` fails -> INVALID_INPUT.
+5.c    Pydantic schema validation (LLMAction, extra="forbid") -> INVALID_INPUT.
+5.d/e  DSL whitelist + type/range validation (app/core/dsl_validator.py) —
+       strict rejection, no clamping -> POLICY_VIOLATION.
+5.f    Canary leak check on the RAW output text (before parsing) ->
+       POLICY_VIOLATION.
+5.g    Contextual/stateful policy: e.g. `set_window`/`set_door_lock` locked
+       while `hal.get_environment().vehicle_speed_kmh` exceeds
+       `policy["contextual_rules"]["speed_lockout_kmh"]` -> POLICY_VIOLATION.
+6.     Execution against the HAL (`hal.apply_action()`).
+7-8.   Audit log entry + deterministic ActionResult.
+```
+
+Design notes:
+- `hal.get_environment()` returns a **copy** (`dataclasses.replace(...)`) of
+  the live `EnvironmentState`, not a live reference — the contextual policy
+  check must not be able to mutate HAL state through the object it reads.
+- `rate_limit_cooldown_s` and `deadline_ms` live in the versioned
+  `vehicle_default.json` policy bundle, not in `.env` — these are auditable
+  security-relevant policy values, not secrets/infrastructure endpoints.
+- The cooldown clock is set in step 0-bis for every *authenticated* request,
+  even ones later blocked in microseconds by the sanitizer/DSL layers — this
+  is intentional: the rate limiter throttles request *attempts*, not only
+  successful ones.
+
+## 3.4. Audit log (`app/core/audit_log.py`)
+
+Append-only, hash-chained JSONL file (`logs/audit.log`, gitignored). Each
+entry:
+
+```text
+{ seq, timestamp, trace_id, mode, prompt_sha256, verdict, error_code, action,
+  prev_hash, entry_hash }
+```
+
+- `prompt_sha256`: SHA-256 of the raw prompt — the log stores no plaintext
+  user input.
+- `entry_hash = HMAC-SHA256(secret, canonical_json(entry_without_entry_hash))`,
+  where `canonical_json` is
+  `json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
+  — a fixed, deterministic serialization so the same entry always hashes to
+  the same value.
+- `prev_hash` chains each entry to the previous one; the chain starts from a
+  genesis hash of 64 zeros and is never reset while the log file exists
+  (`_read_last_state()` resumes from the last line on restart).
+- `verify_chain()` recomputes every entry's HMAC and validates `prev_hash`
+  continuity from genesis — any single tampered field, in any past entry,
+  breaks verification for that entry and all entries after it.
+
+## 3.2, 5.x–6.x
+
+*(pending — will be added as each phase is implemented; §3.2, the vulnerable
+pipeline, is intentionally out of scope for Phase 3)*
+

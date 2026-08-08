@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 import psutil
@@ -233,6 +233,18 @@ class HAL:
             if outside_temp_c is not None:
                 self.environment.outside_temp_c = int(clamp(outside_temp_c, -20, 50))
             return self.environment
+
+    def get_environment(self) -> EnvironmentState:
+        """Return a *copy* of the current EnvironmentState.
+
+        A copy (not the live reference) is returned deliberately: callers
+        (e.g. the secure pipeline's contextual policy check, §3.1 step 5.g)
+        must not be able to mutate `self.environment` by holding onto the
+        returned object — the only sanctioned write path is
+        `set_environment()`. No lock is needed for the read itself, same
+        rationale as `get_telemetry()` (cheap, read-only).
+        """
+        return replace(self.environment)
 
     # ---------------------------------------------------------------- #
     # Telemetry (real hardware, read-only, no lock needed)
