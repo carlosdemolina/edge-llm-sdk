@@ -13,3 +13,6 @@ tools/
 # Documentos de diseño teóricos (no se versionan en el repo de implementación)
 SDK_API.md
 Implementacion_Capitulo6.md
+
+# red-team calibration run outputs (generated, not versioned)
+redteam/reports/
