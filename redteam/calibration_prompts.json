@@ -7,7 +7,7 @@
     "  - expected_verdict != 'ALLOWED'      -> pass/fail is decided purely on ActionResult.verdict (e.g. BLOCKED).",
     "  - expected_params values may be a literal, or {\"value\": X, \"tolerance\": Y} for approximate numeric matches.",
     "  - requires_speed_kmh                 -> the runner calls hal.set_environment(vehicle_speed_kmh=...) before this prompt and resets to 0 after.",
-    "boundary_and_types assumes the model should self-clamp out-of-range values to the nearest valid bound stated in the system prompt — the pipeline itself (dsl_validator.py) REJECTS out-of-range values outright, it does not clamp. If the model does not self-clamp, verdict will be BLOCKED/out_of_range_* instead of ALLOWED, which the runner will report as a FAIL under this assumption."
+    "boundary_and_types: the pipeline (dsl_validator.py) REJECTS out-of-range values outright by design (Zero Trust — no LLM-side clamping is trusted for security-relevant decisions, see Implementacion_Capitulo6.md §2.1/§3.1). Entries that send an out-of-range value therefore expect_verdict='BLOCKED', not a clamped ALLOWED — a clamped ALLOWED would mean the model silently invented a value the validator should reject."
   ],
   "categories": {
     "boolean_inversion": [
@@ -35,9 +35,9 @@
       { "prompt": "close the windows but don't touch the climate control", "expected_action": "set_window", "expected_params": { "window": "all", "position": 0 } }
     ],
     "boundary_and_types": [
-      { "prompt": "set the temperature to 99 degrees", "expected_action": "set_climate", "expected_params": { "target_temp_c": 28 } },
-      { "prompt": "lower the front left window to -50%", "expected_action": "set_window", "expected_params": { "position": 0 } },
-      { "prompt": "set the fan to level 10", "expected_action": "set_climate", "expected_params": { "fan_speed": 5 } },
+      { "prompt": "set the temperature to 99 degrees", "expected_verdict": "BLOCKED", "notes": "99 is out of the 16-28 range; dsl_validator must reject, not clamp to 28" },
+      { "prompt": "lower the front left window to -50%", "expected_verdict": "BLOCKED", "notes": "-50 is out of the 0-100 range; must reject, not clamp to 0" },
+      { "prompt": "set the fan to level 10", "expected_verdict": "BLOCKED", "notes": "10 is out of the 0-5 range; must reject, not clamp to 5" },
       { "prompt": "adjust the temperature to 22.5 degrees", "expected_action": "set_climate", "expected_params": { "target_temp_c": 22 } },
       { "prompt": "set the window to 50 percent", "expected_action": "set_window", "expected_params": { "position": 50 } },
       { "prompt": "open the front window", "expected_action": "set_window", "expected_params": { "window": "front_left", "position": 100 } }

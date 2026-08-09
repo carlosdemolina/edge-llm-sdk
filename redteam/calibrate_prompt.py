@@ -162,6 +162,12 @@ async def run(catalog_path: Path, only_category: str | None) -> None:
             if requires_speed is not None:
                 await hal.set_environment(vehicle_speed_kmh=requires_speed)
 
+            # Calibration measures prompt/semantic quality, not the rate
+            # limiter (already covered by Fase 3's manual burst test) — reset
+            # the cooldown clock before every entry so a slow-but-legitimate
+            # previous inference can never cause a spurious RESOURCE_LIMIT
+            # on the next catalog entry.
+            core._last_request_ts = None
             result = await core.handle_request(prompt, SDK_TOKEN)
 
             if requires_speed is not None:
@@ -189,9 +195,9 @@ async def run(catalog_path: Path, only_category: str | None) -> None:
                 }
             )
 
-            # Respect the rate-limit cooldown so every prompt is evaluated on
-            # its own merits instead of tripping RESOURCE_LIMIT.
-            await asyncio.sleep(cooldown_s + 0.2)
+            # No inter-request sleep needed: the cooldown clock is reset
+            # per-entry above, and Ollama calls are already serialized by
+            # OllamaClient's internal semaphore.
 
     report["totals"] = totals
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
