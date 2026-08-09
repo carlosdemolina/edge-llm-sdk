@@ -72,6 +72,8 @@ async def ws_telemetry(websocket: WebSocket) -> None:
 class ScenarioSetRequest(BaseModel):
     vehicle_speed_kmh: int | None = None
     outside_temp_c: int | None = None
+    fuel_percent: int | None = None
+    battery_percent: int | None = None
 
 
 @router.post("/api/scenario/set", dependencies=[Depends(_verify_sdk_token)])
@@ -79,6 +81,8 @@ async def set_scenario(body: ScenarioSetRequest, request: Request) -> dict:
     await hal.set_environment(
         vehicle_speed_kmh=body.vehicle_speed_kmh,
         outside_temp_c=body.outside_temp_c,
+        fuel_percent=body.fuel_percent,
+        battery_percent=body.battery_percent,
     )
     return build_state_snapshot(request.app.state.metrics)
 

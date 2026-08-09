@@ -24,6 +24,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psutil
 
@@ -83,6 +84,8 @@ class VehicleState:
 class EnvironmentState:
     vehicle_speed_kmh: int = 0     # valid range [0, 220]
     outside_temp_c: int = 20       # valid range [-20, 50]
+    fuel_percent: int = 100        # valid range [0, 100]
+    battery_percent: int = 100     # valid range [0, 100]
 
 
 # --------------------------------------------------------------------------
@@ -94,7 +97,15 @@ class SystemTelemetry:
     cpu_percent: float
     ram_percent: float
     cpu_temp_c: float | None
+    fan_level: int | None          # current cooling_device state (0 = idle/off)
+    fan_level_max: int | None      # max_state of the same cooling_device
     timestamp: str                 # ISO 8601, UTC
+
+
+# Raspberry Pi 5 official Active Cooler thermal cooling device (step_wise
+# governor, states 0-4). Read-only, best-effort: absent on any other board
+# or OS, so every read is wrapped defensively and falls back to None.
+_FAN_COOLING_DEVICE = Path("/sys/class/thermal/cooling_device0")
 
 
 # --------------------------------------------------------------------------
@@ -242,12 +253,18 @@ class HAL:
         self,
         vehicle_speed_kmh: int | None = None,
         outside_temp_c: int | None = None,
+        fuel_percent: int | None = None,
+        battery_percent: int | None = None,
     ) -> EnvironmentState:
         async with self._lock:
             if vehicle_speed_kmh is not None:
                 self.environment.vehicle_speed_kmh = int(clamp(vehicle_speed_kmh, 0, 220))
             if outside_temp_c is not None:
                 self.environment.outside_temp_c = int(clamp(outside_temp_c, -20, 50))
+            if fuel_percent is not None:
+                self.environment.fuel_percent = int(clamp(fuel_percent, 0, 100))
+            if battery_percent is not None:
+                self.environment.battery_percent = int(clamp(battery_percent, 0, 100))
             return self.environment
 
     def get_environment(self) -> EnvironmentState:
@@ -267,12 +284,24 @@ class HAL:
     # ---------------------------------------------------------------- #
 
     def get_telemetry(self) -> SystemTelemetry:
+        fan_level, fan_level_max = self._read_fan_level()
         return SystemTelemetry(
             cpu_percent=psutil.cpu_percent(interval=None),
             ram_percent=psutil.virtual_memory().percent,
             cpu_temp_c=self._read_cpu_temp(),
+            fan_level=fan_level,
+            fan_level_max=fan_level_max,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
+
+    @staticmethod
+    def _read_fan_level() -> tuple[int | None, int | None]:
+        try:
+            level = int((_FAN_COOLING_DEVICE / "cur_state").read_text().strip())
+            level_max = int((_FAN_COOLING_DEVICE / "max_state").read_text().strip())
+            return level, level_max
+        except (OSError, ValueError):
+            return None, None
 
     def _read_cpu_temp(self) -> float | None:
         try:

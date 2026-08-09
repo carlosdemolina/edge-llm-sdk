@@ -92,6 +92,7 @@ def _new_debug_ctx(debug_mode: bool) -> dict | None:
         "stages": [],
         "cpu_start": psutil.cpu_percent(interval=None),
         "ram_start": psutil.virtual_memory().percent,
+        "cpu_temp_start": hal.get_telemetry().cpu_temp_c,
         "final_prompt": None,
         "raw_llm_output": None,
         "parsed_llm_action": None,
@@ -137,6 +138,8 @@ async def _finalize_debug_trace(
         cpu_percent_end=psutil.cpu_percent(interval=None),
         ram_percent_start=debug_ctx["ram_start"],
         ram_percent_end=psutil.virtual_memory().percent,
+        cpu_temp_c_start=debug_ctx["cpu_temp_start"],
+        cpu_temp_c_end=hal.get_telemetry().cpu_temp_c,
         pipeline="vulnerable",
     )
     if debug_log is not None:
@@ -273,5 +276,6 @@ async def vulnerable_chat(
             action=action,
             message=f"(no validation) action '{action}' executed. Model output: {exposed_output}",
             trace_id=trace_id,
+            params=params,
         )
     )

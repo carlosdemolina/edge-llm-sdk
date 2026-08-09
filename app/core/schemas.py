@@ -80,6 +80,8 @@ class DebugTrace:
     cpu_percent_end: float | None = None
     ram_percent_start: float | None = None
     ram_percent_end: float | None = None
+    cpu_temp_c_start: float | None = None
+    cpu_temp_c_end: float | None = None
     pipeline: str = "secure"          # "secure" | "vulnerable" — lets the
                                       # Admin/Debug tab and debug_trace.jsonl
                                       # distinguish/compare both pipelines
@@ -93,3 +95,7 @@ class ActionResult:
     message: str                     # SDK-deterministic message, never the LLM's `reasoning`
     trace_id: str | None
     debug: DebugTrace | None = None  # only populated when SDK_DEBUG_MODE is on
+    params: dict[str, Any] | None = None  # only populated on ALLOWED — lets the
+                                           # frontend render a friendly HUD phrase
+                                           # ("opening window") without trusting
+                                           # the LLM's own `reasoning` text
