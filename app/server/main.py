@@ -78,6 +78,11 @@ async def lifespan(app: FastAPI):
     app.state.audit_log = audit_log
     app.state.debug_mode = SDK_DEBUG_MODE
     app.state.debug_log = debug_log
+    # Shared with the vulnerable pipeline (routes_vulnerable.py) so its system
+    # prompt can document the same DSL catalog as the secure pipeline — the
+    # catalog is API documentation, not a security control (see
+    # app/core/prompt_catalog.py).
+    app.state.dsl_catalog = dsl_catalog
     app.state.secure_core = SecureSDKCore(
         hal=hal,
         ollama_client=ollama_client,
