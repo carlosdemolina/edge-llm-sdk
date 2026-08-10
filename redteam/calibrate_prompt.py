@@ -1,9 +1,15 @@
-"""Prompt-quality / red-team calibration runner (see Implementacion_Capitulo6.md).
+"""Prompt-quality calibration runner (see Implementacion_Capitulo6.md).
 
-Runs a catalog of prompts (JSON file — `calibration_prompts.json` by default,
-or `attack_prompts.json` for the security catalog) straight through
-`SecureSDKCore.handle_request()`, WITHOUT going through the HTTP server —
-same pattern as the manual `_demo()` in `app/core/sdk_core.py`.
+Runs the calibration catalog (`redteam/calibration_prompts.json`) straight
+through `SecureSDKCore.handle_request()`, WITHOUT going through the HTTP
+server — same pattern as the manual `_demo()` in `app/core/sdk_core.py`.
+
+This is deliberately scoped to prompt/semantic quality only, always against
+the secure pipeline. The security attack catalog (`redteam/attack_prompts.json`)
+is exclusively run by `redteam/run_redteam.py` (HTTP, secure+vulnerable dual
+pipeline, plus credential_bypass) — that harness is strictly more complete
+for security testing than an in-process, secure-only run could be, so this
+module no longer supports pointing it at an arbitrary catalog file.
 
 Why not just hit the running server with curl? Two reasons:
   1. We want `SDK_DEBUG_MODE` always on for this run, regardless of how the
@@ -18,10 +24,16 @@ on purpose, so a run's full per-request pipeline detail (final prompt, raw
 LLM output, parsed action, Ollama metrics) is inspectable both here (console
 report + JSON report file) and in the live dashboard's Admin/Debug panel.
 
+The model tested is whatever `OLLAMA_MODEL` resolves to (see app/config.py)
+at the time this process starts — set it in the environment before running
+to calibrate a specific model (`redteam/run_suite.py` does this automatically
+when comparing multiple models). The report JSON and its filename both
+record which model produced it.
+
 Usage:
     python -m redteam.calibrate_prompt
-    python -m redteam.calibrate_prompt --file redteam/attack_prompts.json
     python -m redteam.calibrate_prompt --category boolean_inversion
+    OLLAMA_MODEL=llama3.2:1b python -m redteam.calibrate_prompt
 """
 
 from __future__ import annotations
@@ -47,9 +59,10 @@ from app.core.debug_log import DebugTraceLog
 from app.core.sdk_core import SecureSDKCore
 from app.hal.hal import hal
 from app.llm.ollama_client import OllamaClient
-from redteam.scoring import NormalizedResult, score_entry
+from redteam.scoring import NormalizedResult, model_slug, score_entry
 
 CALIBRATION_AUDIT_LOG_PATH = BASE_DIR / "logs" / "calibration_audit.log"
+CALIBRATION_CATALOG_PATH = BASE_DIR / "redteam" / "calibration_prompts.json"
 REPORTS_DIR = BASE_DIR / "redteam" / "reports"
 POLICIES_DIR = BASE_DIR / "app" / "policies"
 
@@ -91,6 +104,7 @@ async def run(catalog_path: Path, only_category: str | None) -> None:
     run_started = datetime.now(timezone.utc).isoformat()
     report: dict[str, Any] = {
         "catalog_file": str(catalog_path),
+        "model": OLLAMA_MODEL,
         "started_at": run_started,
         "categories": {},
     }
@@ -162,7 +176,8 @@ async def run(catalog_path: Path, only_category: str | None) -> None:
     print(f"{'TOTAL':32s} PASS={totals['PASS']:<3} FAIL={totals['FAIL']:<3} REVIEW={totals['REVIEW']:<3}")
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = REPORTS_DIR / f"calibration_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    report_path = REPORTS_DIR / f"calibration_{model_slug(OLLAMA_MODEL)}_{timestamp}.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nFull report written to {report_path.relative_to(BASE_DIR)}")
     print(f"Per-request debug traces (final prompt, raw LLM output, params, metrics) in {DEBUG_TRACE_LOG_PATH.relative_to(BASE_DIR)}")
@@ -170,15 +185,10 @@ async def run(catalog_path: Path, only_category: str | None) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--file",
-        default=str(BASE_DIR / "redteam" / "calibration_prompts.json"),
-        help="Path to the prompt catalog JSON (default: redteam/calibration_prompts.json)",
-    )
     parser.add_argument("--category", default=None, help="Run only this category")
     args = parser.parse_args()
 
-    asyncio.run(run(Path(args.file), args.category))
+    asyncio.run(run(CALIBRATION_CATALOG_PATH, args.category))
 
 
 if __name__ == "__main__":
