@@ -1,11 +1,11 @@
-"""HTTP-based Red Team runner (see Implementacion_Capitulo6.md §3.7).
+"""HTTP-based Red Team runner.
 
 Unlike `calibrate_prompt.py` (in-process, secure pipeline only, via
 `SecureSDKCore.handle_request()`), this module drives BOTH
 `/api/secure/chat` and `/api/vulnerable/chat` over real HTTP against an
 already-running server, so it can produce the side-by-side secure-vs-
-vulnerable security comparison that is the whole point of Phase 9's Red
-Teaming requirement — a comparison `calibrate_prompt.py` cannot make, since
+vulnerable security comparison that is this catalog's whole point — a
+comparison `calibrate_prompt.py` cannot make, since
 it never touches the vulnerable pipeline at all.
 
 This requires the target server to be started with `SDK_DEBUG_MODE=true`
@@ -14,7 +14,7 @@ This requires the target server to be started with `SDK_DEBUG_MODE=true`
 `raw_llm_output`) is NEVER attached to a chat response body itself:
 `ActionResult.debug` is always `None` over HTTP regardless of server-side
 debug mode, because both `routes_secure.py` and `routes_vulnerable.py`
-return `asdict(result)` directly (see docs/DESIGN_SPEC.md §3.5). The only
+return `asdict(result)` directly (see docs/ARCHITECTURE.md §3.5). The only
 way to recover that detail is `GET /api/debug/traces?limit=1`, polled
 immediately after every chat call — which itself 404s if the server wasn't
 started with debug mode on, and returns entries newest-first (see
@@ -41,13 +41,15 @@ import json
 import re
 import time
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 import websockets
 
 from app.config import BASE_DIR, SDK_TOKEN
+from redteam.report_markdown import write_category_markdown
 from redteam.scoring import NormalizedResult, model_slug, score_entry
 
 REPORTS_DIR = BASE_DIR / "redteam" / "reports"
@@ -99,7 +101,7 @@ class RedTeamClient:
     async def raw_reset(self) -> int:
         """POST /api/reset with NO auth header, returning only the status
         code without raising -- used by `reset_bypass_checks` to observe
-        whether the (documented-intentional, see docs/DESIGN_SPEC.md Phase 4)
+        whether the (documented-intentional, see docs/ARCHITECTURE.md §3.5)
         unauthenticated reset still succeeds, without crashing the run if a
         future fix makes it require auth.
         """
@@ -163,7 +165,7 @@ class RedTeamClient:
         """GET a path with NO auth header at all, returning only the HTTP
         status code -- used by `unauth_endpoint_checks`, which asserts
         whether a given endpoint currently requires `X-SDK-Token` or not
-        (see docs/DESIGN_SPEC.md Phase 4/5 for which of these is intended).
+        (see docs/ARCHITECTURE.md §3.5 for which of these is intended).
         """
         r = await self._client.get(path)
         return r.status_code
@@ -357,7 +359,7 @@ async def _run_reset_bypass_checks(
     """Special-cased, secure-pipeline-only (contextual_policy has no
     vulnerable-pipeline equivalent to bypass in the first place): reproduces
     the manually-confirmed chain where the DOCUMENTED-INTENTIONAL
-    unauthenticated `POST /api/reset` (docs/DESIGN_SPEC.md Phase 4) can
+    unauthenticated `POST /api/reset` (docs/ARCHITECTURE.md §3.5) can
     still be used to defeat contextual_policy's speed lockout, since
     `hal.reset()` also zeroes `vehicle_speed_kmh`.
 
@@ -431,7 +433,7 @@ async def _run_unauth_endpoint_checks(
     report_categories: dict[str, Any],
 ) -> None:
     """Regression check for the auth surface documented in
-    docs/DESIGN_SPEC.md Phase 4/5 -- not scored per secure/vulnerable
+    docs/ARCHITECTURE.md §3.5 -- not scored per secure/vulnerable
     pipeline (these are shared infra endpoints, not `/api/*/chat`), so
     results are recorded under the "secure" bucket only, by convention.
     """
@@ -465,7 +467,7 @@ async def _run_unauth_endpoint_checks(
         else:
             status, detail = "FAIL", (
                 f"expected auth_required={expected_auth_required}, observed auth_required="
-                f"{actual_auth_required} ({observed}) -- diverges from docs/DESIGN_SPEC.md"
+                f"{actual_auth_required} ({observed}) -- diverges from docs/ARCHITECTURE.md"
             )
         totals["secure"][status] += 1
 
@@ -498,7 +500,7 @@ async def _run_semaphore_dos_checks(
 
     Always scored REVIEW, never PASS/FAIL: the semaphore and the unauthenticated
     vulnerable endpoint are each individually intentional design decisions (see
-    docs/DESIGN_SPEC.md), so this just surfaces the concrete, measured evidence
+    docs/ARCHITECTURE.md), so this just surfaces the concrete, measured evidence
     of the emergent cross-pipeline DoS risk for a human review decision.
     """
     print("\n=== semaphore_dos_checks ===")
@@ -571,122 +573,6 @@ async def _run_semaphore_dos_checks(
         )
 
 
-def _fence_for(text: str) -> str:
-    """Pick a backtick fence long enough that it can't be prematurely closed
-    by backtick runs already present inside `text` (LLM output/prompts can
-    legitimately contain ``` themselves).
-    """
-    longest_run = 0
-    current = 0
-    for ch in text:
-        if ch == "`":
-            current += 1
-            longest_run = max(longest_run, current)
-        else:
-            current = 0
-    return "`" * max(3, longest_run + 1)
-
-
-def _code_block(text: str, lang: str = "") -> list[str]:
-    fence = _fence_for(text)
-    return [f"{fence}{lang}", text, fence]
-
-
-def _render_trace_block(trace: dict) -> list[str]:
-    """Renders the same per-request pipeline detail as the live dashboard's
-    "Admin / Debug — pipeline trace" panel (see frontend/js/dashboard.js
-    `renderDebugTraceEntry()`), as a collapsible Markdown `<details>` block —
-    stage-by-stage timing/status, the full prompt sent to the LLM, its raw
-    output, the parsed action and Ollama's own timing metrics, plus the
-    CPU/RAM/temperature delta observed for that single request.
-    """
-    lines: list[str] = []
-    total_ms = trace.get("sdk_total_duration_ms")
-    total_label = f"{total_ms:.0f} ms" if isinstance(total_ms, (int, float)) else "—"
-    lines.append(f"<details>\n<summary>pipeline trace — trace_id {trace.get('trace_id', '—')} ({total_label} total)</summary>\n")
-
-    stages = trace.get("stages") or []
-    if stages:
-        lines.append("**Stages:**\n")
-        for stage in stages:
-            duration = stage.get("duration_ms")
-            duration_part = f" ({duration:.1f} ms)" if isinstance(duration, (int, float)) else ""
-            detail_part = f" — {stage['detail']}" if stage.get("detail") else ""
-            lines.append(f"- `{stage.get('name')}`: **{stage.get('status')}**{duration_part}{detail_part}")
-        lines.append("")
-
-    if trace.get("final_prompt"):
-        lines.append("**final_prompt:**\n")
-        lines.extend(_code_block(trace["final_prompt"]))
-        lines.append("")
-
-    if trace.get("raw_llm_output"):
-        lines.append("**raw_llm_output:**\n")
-        lines.extend(_code_block(trace["raw_llm_output"]))
-        lines.append("")
-
-    if trace.get("parsed_llm_action") is not None:
-        lines.append("**parsed_llm_action:**\n")
-        lines.extend(_code_block(json.dumps(trace["parsed_llm_action"], indent=2, ensure_ascii=False), "json"))
-        lines.append("")
-
-    if trace.get("ollama_metrics") is not None:
-        lines.append("**ollama_metrics:**\n")
-        lines.extend(_code_block(json.dumps(trace["ollama_metrics"], indent=2, ensure_ascii=False), "json"))
-        lines.append("")
-
-    cpu0, cpu1 = trace.get("cpu_percent_start"), trace.get("cpu_percent_end")
-    ram0, ram1 = trace.get("ram_percent_start"), trace.get("ram_percent_end")
-    temp0, temp1 = trace.get("cpu_temp_c_start"), trace.get("cpu_temp_c_end")
-    if any(v is not None for v in (cpu0, cpu1, ram0, ram1, temp0, temp1)):
-        lines.append(f"CPU: {cpu0}% → {cpu1}% · RAM: {ram0}% → {ram1}% · Temp: {temp0}°C → {temp1}°C\n")
-
-    lines.append("</details>")
-    return lines
-
-
-def _render_mode_result(label: str, info: dict) -> list[str]:
-    status = info.get("status", "?")
-    detail = info.get("detail", "")
-    lines = [f"- **{label}** `{status}` — {detail}"]
-    # Full trace detail is only surfaced for FAIL/REVIEW cases -- a clean
-    # PASS doesn't need the stage-by-stage breakdown to be understood, and
-    # dumping it for every single PASS would bury the cases that actually
-    # need attention under a wall of repetitive, expected-good detail.
-    trace = info.get("trace")
-    if status != "PASS" and trace:
-        lines.append("")
-        lines.extend(_render_trace_block(trace))
-    return lines
-
-
-def _render_case(index: int, entry: dict) -> list[str]:
-    title = entry.get("description") or entry.get("prompt") or f"case {index}"
-    lines = [f"## {index}. {title}\n"]
-
-    meta = {
-        k: v
-        for k, v in entry.items()
-        if k not in ("description", "prompt", "secure", "vulnerable")
-    }
-    if meta:
-        meta_line = " · ".join(f"{k}={v}" for k, v in meta.items())
-        lines.append(f"*{meta_line}*\n")
-
-    for label, key in (("SECURE", "secure"), ("VULNERABLE", "vulnerable")):
-        if key in entry:
-            lines.extend(_render_mode_result(label, entry[key]))
-    lines.append("")
-    return lines
-
-
-def _write_category_markdown(run_dir: Path, category: str, entries: list[dict]) -> None:
-    lines = [f"# {category}\n"]
-    for i, entry in enumerate(entries, start=1):
-        lines.extend(_render_case(i, entry))
-    (run_dir / f"{category}.md").write_text("\n".join(lines), encoding="utf-8")
-
-
 def _print_summary(totals_by_category: dict[str, dict[str, dict[str, int]]], grand_totals: dict[str, dict[str, int]]) -> None:
     print("\n=== Summary ===")
     for category, totals in totals_by_category.items():
@@ -700,6 +586,34 @@ def _print_summary(totals_by_category: dict[str, dict[str, dict[str, int]]], gra
         f"{'TOTAL':24s} secure PASS={s['PASS']:<3} FAIL={s['FAIL']:<3} REVIEW={s['REVIEW']:<3} | "
         f"vulnerable PASS={v['PASS']:<3} FAIL={v['FAIL']:<3} REVIEW={v['REVIEW']:<3}"
     )
+
+
+async def _run_and_accumulate(
+    name: str,
+    run_check: Callable[[dict[str, dict[str, int]]], Awaitable[None]],
+    totals_by_category: dict[str, dict[str, dict[str, int]]],
+    grand_totals: dict[str, dict[str, int]],
+) -> None:
+    """Run one category/special-section check against a fresh
+    `_empty_totals()` accumulator, then fold its totals into both
+    `totals_by_category[name]` and the running `grand_totals`.
+
+    Factors out the bookkeeping every `_run_*` call site in `run()` below
+    otherwise repeated verbatim (create `category_totals`, await the check
+    with it, record it, merge into `grand_totals`) -- five copies of the
+    same ~8 lines before this helper existed.
+
+    `run_check` takes the fresh `category_totals` dict as its only argument
+    and returns an awaitable; call sites build it with `functools.partial`,
+    pre-binding every other argument the underlying `_run_*` function needs
+    (client, entries, cooldown_s, report_categories, ...).
+    """
+    category_totals = _empty_totals()
+    await run_check(category_totals)
+    totals_by_category[name] = category_totals
+    for mode in ("secure", "vulnerable"):
+        for status in ("PASS", "FAIL", "REVIEW"):
+            grand_totals[mode][status] += category_totals[mode][status]
 
 
 async def run(catalog_path: Path, base_url: str, only_category: str | None, model_label: str | None = None) -> None:
@@ -759,44 +673,44 @@ async def run(catalog_path: Path, base_url: str, only_category: str | None, mode
 
     try:
         for category, entries in categories.items():
-            category_totals = _empty_totals()
-            await _run_category(client, category, entries, cooldown_s, category_totals, report["categories"])
-            totals_by_category[category] = category_totals
-            for mode in ("secure", "vulnerable"):
-                for status in ("PASS", "FAIL", "REVIEW"):
-                    grand_totals[mode][status] += category_totals[mode][status]
+            await _run_and_accumulate(
+                category,
+                partial(_run_category, client, category, entries, cooldown_s, report_categories=report["categories"]),
+                totals_by_category,
+                grand_totals,
+            )
 
         if run_credential_bypass and credential_bypass_entries:
-            category_totals = _empty_totals()
-            await _run_credential_bypass(client, credential_bypass_entries, cooldown_s, category_totals, report["categories"])
-            totals_by_category["credential_bypass"] = category_totals
-            for mode in ("secure", "vulnerable"):
-                for status in ("PASS", "FAIL", "REVIEW"):
-                    grand_totals[mode][status] += category_totals[mode][status]
+            await _run_and_accumulate(
+                "credential_bypass",
+                partial(_run_credential_bypass, client, credential_bypass_entries, cooldown_s, report_categories=report["categories"]),
+                totals_by_category,
+                grand_totals,
+            )
 
         if run_reset_bypass_checks and reset_bypass_entries:
-            category_totals = _empty_totals()
-            await _run_reset_bypass_checks(client, reset_bypass_entries, cooldown_s, category_totals, report["categories"])
-            totals_by_category["reset_bypass_checks"] = category_totals
-            for mode in ("secure", "vulnerable"):
-                for status in ("PASS", "FAIL", "REVIEW"):
-                    grand_totals[mode][status] += category_totals[mode][status]
+            await _run_and_accumulate(
+                "reset_bypass_checks",
+                partial(_run_reset_bypass_checks, client, reset_bypass_entries, cooldown_s, report_categories=report["categories"]),
+                totals_by_category,
+                grand_totals,
+            )
 
         if run_unauth_endpoint_checks and unauth_endpoint_entries:
-            category_totals = _empty_totals()
-            await _run_unauth_endpoint_checks(client, unauth_endpoint_entries, category_totals, report["categories"])
-            totals_by_category["unauth_endpoint_checks"] = category_totals
-            for mode in ("secure", "vulnerable"):
-                for status in ("PASS", "FAIL", "REVIEW"):
-                    grand_totals[mode][status] += category_totals[mode][status]
+            await _run_and_accumulate(
+                "unauth_endpoint_checks",
+                partial(_run_unauth_endpoint_checks, client, unauth_endpoint_entries, report_categories=report["categories"]),
+                totals_by_category,
+                grand_totals,
+            )
 
         if run_semaphore_dos_checks and semaphore_dos_entries:
-            category_totals = _empty_totals()
-            await _run_semaphore_dos_checks(client, semaphore_dos_entries, category_totals, report["categories"])
-            totals_by_category["semaphore_dos_checks"] = category_totals
-            for mode in ("secure", "vulnerable"):
-                for status in ("PASS", "FAIL", "REVIEW"):
-                    grand_totals[mode][status] += category_totals[mode][status]
+            await _run_and_accumulate(
+                "semaphore_dos_checks",
+                partial(_run_semaphore_dos_checks, client, semaphore_dos_entries, report_categories=report["categories"]),
+                totals_by_category,
+                grand_totals,
+            )
     finally:
         await client.aclose()
 
@@ -814,7 +728,7 @@ async def run(catalog_path: Path, base_url: str, only_category: str | None, mode
 
     (run_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     for category, entries in report["categories"].items():
-        _write_category_markdown(run_dir, category, entries)
+        write_category_markdown(run_dir, category, entries)
 
     print(f"\nFull report written to {run_dir.relative_to(BASE_DIR)}/ (report.json + one .md per category)")
 
