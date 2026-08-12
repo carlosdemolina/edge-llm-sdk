@@ -1,5 +1,5 @@
 /**
- * Dashboard rendering + interactions (see docs/DESIGN_SPEC.md, Phase 6).
+ * Dashboard rendering + interactions (see docs/ARCHITECTURE.md).
  *
  * Responsible for:
  * - Rendering the {vehicle, environment, telemetry, metrics} snapshot,
@@ -315,12 +315,15 @@ function setSchematicHazard(active) {
   }
 }
 
-function renderWsStatus(connected) {
+function renderWsStatus(status) {
   const el = document.getElementById("ws-status");
   if (!el) return;
-  if (connected) {
+  if (status === "connected") {
     el.textContent = "Connected";
     el.className = "badge badge-ok";
+  } else if (status === "reconnecting") {
+    el.textContent = "Reconnecting…";
+    el.className = "badge badge-warn";
   } else {
     el.textContent = "Disconnected";
     el.className = "badge badge-error";
@@ -643,7 +646,7 @@ function initTokenField() {
 }
 
 /**
- * Admin/Debug tab (developer tool, see docs/DESIGN_SPEC.md). Hidden unless
+ * Admin/Debug tab (developer tool, see docs/ARCHITECTURE.md). Hidden unless
  * the server confirms SDK_DEBUG_MODE is on (GET /api/debug/status) — no
  * trace content is ever fetched or rendered otherwise.
  */
@@ -784,7 +787,7 @@ async function initDebugSection() {
 }
 
 /**
- * Audit modal (Phase 8) — read-only view of the tamper-evident
+ * Audit modal — read-only view of the tamper-evident
  * `audit.log`, a production security feature (unlike the Admin/Debug
  * section above), so it is always reachable from the header, never gated
  * by SDK_DEBUG_MODE. Both endpoints require X-SDK-Token.
