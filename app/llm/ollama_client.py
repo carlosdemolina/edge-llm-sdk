@@ -1,21 +1,21 @@
-"""Async client for the local Ollama HTTP API (see docs/DESIGN_SPEC.md §3.3).
+"""Async client for the local Ollama HTTP API (see docs/ARCHITECTURE.md §3.3).
 
 This module is a pure transport layer: it sends requests to Ollama and
 returns the raw response text. It intentionally does NOT parse or validate
 JSON output, whitelist actions, or apply any security policy — that is the
-exclusive responsibility of `app/core/sdk_core.py` (Phase 3).
+exclusive responsibility of `app/core/sdk_core.py`.
 
 Design notes:
 - `OllamaClient` is NOT instantiated as a module-level singleton (unlike
   `app/hal/hal.py`). Its `httpx.AsyncClient` holds a persistent HTTP
   connection whose lifecycle should be tied explicitly to the application
-  that uses it: the FastAPI server will create one in its startup event and
-  close it in its shutdown event (Phase 4); this Phase 2's manual CLI script
+  that uses it: the FastAPI server creates one in its startup event and
+  closes it in its shutdown event; the manual CLI demo (`_demo()` below)
   creates and closes its own instance.
 - `asyncio.Semaphore(1)` lives here (not in sdk_core.py) so that Ollama calls
   are serialized regardless of which pipeline (secure or vulnerable) issues
   them — the Raspberry Pi only has resources to run one inference at a time.
-- Timeouts are split by phase: a short `connect` timeout (Ollama down/unreachable
+- Timeouts are split by purpose: a short `connect` timeout (Ollama down/unreachable
   should fail fast) and a much longer `read` timeout (the model can take
   8-12s to warm up from an idle state on the Pi 5 before generating).
 """
@@ -64,8 +64,8 @@ class OllamaClient:
     async def ensure_model_available(self) -> None:
         """Fail-fast check: verify `self.model` is present in `ollama list`.
 
-        Meant to be called once at application startup (Phase 4's FastAPI
-        startup event). Raises RuntimeError with a clear message if the
+        Meant to be called once at application startup (the FastAPI
+        `lifespan` handler). Raises RuntimeError with a clear message if the
         model is missing, instead of letting the first user chat fail
         silently.
         """

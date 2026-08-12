@@ -1,4 +1,4 @@
-"""Ingress sanitization for user prompts (see docs/DESIGN_SPEC.md §3.1 step 2).
+"""Ingress sanitization for user prompts (see docs/ARCHITECTURE.md §3.1 step 2).
 
 This is a defense-in-depth layer, NOT the primary security control — it only
 mitigates the crudest injection/resource-exhaustion patterns. It must never

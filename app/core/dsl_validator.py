@@ -1,4 +1,4 @@
-"""DSL whitelist + range validation (see docs/DESIGN_SPEC.md §3.1 step 5.d/5.e).
+"""DSL whitelist + range validation (see docs/ARCHITECTURE.md §3.1 step 5.d/5.e).
 
 Unlike `hal.py`'s defensive clamping, this layer REJECTS out-of-range or
 out-of-catalog values outright — in secure mode, invalid parameters are a

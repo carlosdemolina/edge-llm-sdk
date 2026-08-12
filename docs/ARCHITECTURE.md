@@ -1,15 +1,10 @@
-# Design Specification (English reference)
+# Architecture
 
-> The authoritative source of design decisions for this project is a private,
-> Spanish-language document (`Implementacion_Capitulo6.md`) that is **not**
-> included in this repository (see `.gitignore`). This file mirrors, section by
-> section and in English, **only the parts that are already implemented in
-> code**, so that in-repo comments can reference a document that actually
-> exists here. Section numbers are kept aligned with the private source
-> document for traceability.
->
-> Sections not yet listed below are pending and will be added as their
-> corresponding implementation phase is completed (see `docs/phases/`).
+Technical reference for the Secure SDK prototype: the data contracts, the
+secure and vulnerable request pipelines, and the server/frontend that expose
+them. Section numbers are an internal organizational scheme (not tied to any
+external document) and are referenced throughout the codebase's comments and
+docstrings, e.g. `see docs/ARCHITECTURE.md §3.1`.
 
 ---
 
@@ -81,7 +76,7 @@ SystemTelemetry (real, read-only, Raspberry Pi hardware):
   3.2B parameters, Q4_K_M quantization), `stream: false` in prototype v1.
 - Parameters (`options`): `temperature`, `top_k`, `top_p`, plus `format: "json"`
   when required.
-- Startup check (FastAPI `startup event`, wired in Phase 4): `GET /api/tags` to
+- Startup check (FastAPI `lifespan` handler): `GET /api/tags` to
   confirm `llama3.2:latest` is downloaded; if missing, raise a clear error and
   abort (fail-fast, never fail silently on the user's first chat).
 - Calls are serialized via `asyncio.Semaphore(1)` inside the client itself —
@@ -262,7 +257,7 @@ release simply ships with the switch off.
   `contextual_policy`, `execution`), each with `status`
   (`passed`/`blocked`/`skipped`), an optional `detail` string, and
   `duration_ms` timed since the previous stage. `routes_vulnerable.py`
-  (Phase 7) reuses the exact same stage names, marking the ones it
+  reuses the exact same stage names, marking the ones it
   deliberately does not run as `skipped` (rather than omitting them), so
   both pipelines' stage lists line up 1:1 for direct comparison; it also
   adds one extra stage, `type_check`, for its lightweight `isinstance`
@@ -276,12 +271,12 @@ release simply ships with the switch off.
   `sdk_total_duration_ms` (the whole `handle_request()` call, so the
   pipeline's own overhead can be separated from Ollama's inference time),
   a CPU/RAM snapshot (`psutil`) taken at the very start and very end of the
-  request, and `pipeline` (`"secure"` | `"vulnerable"`, Phase 7) so the
+  request, and `pipeline` (`"secure"` | `"vulnerable"`) so the
   Admin/Debug tab and `debug_trace.jsonl` can distinguish and compare
   entries from either pipeline in the same file.
 - **Known limitation, documented rather than engineered around**:
   `psutil.cpu_percent(interval=None)` measures usage *since the last call
-  anywhere in the process* — the Phase 5 telemetry broadcast loop also
+  anywhere in the process* — the telemetry broadcast loop also
   samples it every second in the background, so the CPU delta attributed to
   a single debug-traced request is an approximation, not a perfectly
   isolated per-request measurement.
@@ -298,11 +293,10 @@ release simply ships with the switch off.
   history survives page reloads, matching the explicit requirement that
   these traces double as raw material for a future automated test bench.
 
-## 3.4-ter. Audit visibility panel (Phase 8)
+## 3.4-ter. Audit visibility panel
 
-`AuditLog` (§3.4) has existed since Phase 4/5 as a write-only, tamper-evident
-record — nothing ever read it back. Phase 8 adds a **read-only, always-on**
-dashboard panel so every attempt (blocked or allowed, either pipeline) is
+`AuditLog` (§3.4) is a write-only, tamper-evident record by design — this
+section adds a **read-only, always-on** dashboard panel so every attempt (blocked or allowed, either pipeline) is
 visible with its verdict and chained hash, without weakening the log's
 append-only guarantees:
 
@@ -318,7 +312,7 @@ append-only guarantees:
   feature, not a developer tool, so its visibility endpoints are always
   available to any authenticated caller. `/api/audit/verify` simply returns
   `{"valid": bool}` from the existing `verify_chain()`.
-- **Frontend**: a prominent "Auditoría" button in the dashboard header (next
+- **Frontend**: a prominent "Audit" button in the dashboard header (next
   to Reset, not tucked into the Admin/Debug tab) opens a modal overlay
   (`#audit-modal` in `frontend/index.html`) listing recent entries — each
   rendered as a compact card with `seq`, timestamp, a `[secure]`/
@@ -332,7 +326,7 @@ append-only guarantees:
   accountability feature meant to be discoverable, so it gets its own
   always-visible header button.
 
-## 3.2. Vulnerable pipeline (`app/server/routes_vulnerable.py`, Phase 7)
+## 3.2. Vulnerable pipeline (`app/server/routes_vulnerable.py`)
 
 `POST /api/vulnerable/chat` exists purely as a controlled, side-by-side
 counter-example to `SecureSDKCore` — a quantifiable "before/after" for the
@@ -369,11 +363,10 @@ as the secure pipeline, but wires them together with almost none of
   vulnerable response echoes the model's own `reasoning` (or, failing that,
   the raw output text) back in `message` — this is what makes a canary leak
   or a successful prompt injection *visible* in the chat, which is the point
-  of the Red Teaming comparison (§3.7/Phase 9).
+  of the red-team comparison (see `redteam/`).
 - **No DSL catalog in the system prompt — empirical finding**: because the
-  vulnerable prompt never lists valid actions (§3.2 of
-  `Implementacion_Capitulo6.md` specifies this minimal prompt deliberately),
-  the model frequently invents action names that don't exist in `hal.py`
+  vulnerable prompt deliberately never lists valid actions, the model
+  frequently invents action names that don't exist in `hal.py`
   (e.g. `open_front_left_sleeper`, `open_sunroof`) rather than the real
   `set_window`. The HAL's fixed, hardcoded action set means this is
   rejected as `unknown_action` regardless — i.e. even the *vulnerable* mode
@@ -387,8 +380,8 @@ as the secure pipeline, but wires them together with almost none of
   at `sanitization` if the prompt also matches an injection deny-pattern),
   while the vulnerable endpoint executes it and the HAL state confirms all
   four windows open to 100% at 180 km/h. This distinction (fixed action
-  space vs. semantic/contextual validation) is worth keeping explicit for
-  Phase 9's Red Teaming catalog design.
+  space vs. semantic/contextual validation) is the basis for the red-team
+  attack catalog design (`redteam/attack_prompts.json`).
 - **Debug-trace instrumentation, tagged `pipeline="vulnerable"`**:
   `routes_vulnerable.py` duplicates the same accumulator/mark-stage/finalize
   pattern used by `SecureSDKCore` (rather than sharing an instance, since
@@ -405,20 +398,19 @@ as the secure pipeline, but wires them together with almost none of
   way as the secure pipeline's tracing (`SDK_DEBUG_MODE`, off by default);
   it adds no security behavior of its own.
 
-## 3.5. Server (`app/server/main.py`, Phases 4–5, 7 scope)
+## 3.5. Server (`app/server/main.py`)
 
-Phase 4 implemented the REST endpoints. Phase 5 (below) adds the WebSocket
-telemetry broadcast loop on top of them. Phase 7 mounts the vulnerable-mode
-router (`routes_vulnerable.router`) alongside the secure one.
+Covers the FastAPI app lifecycle, the REST/WebSocket surface, and the
+static frontend mount.
 
 - **Lifecycle**: FastAPI's `lifespan` async context manager (not the
   deprecated `@app.on_event`) creates a single `OllamaClient`, calls
   `ensure_model_available()` (fail-fast: aborts startup if the model is
   missing), a single `AuditLog`, and a single `SecureSDKCore` — all stored on
   `app.state`. On shutdown, `ollama_client.aclose()` is awaited. `hal` is
-  imported directly as the existing module-level singleton (same pattern as
-  every previous phase), not re-wired through `app.state`.
-- **Startup warm-up (post-Phase 6 addendum)**: right after
+  imported directly as the existing module-level singleton, not re-wired
+  through `app.state`.
+- **Startup warm-up**: right after
   `ensure_model_available()`, `lifespan` fires
   `ollama_client.warm_up(OLLAMA_KEEP_ALIVE)` as a background
   `asyncio.create_task` (reference kept to avoid premature GC, never
@@ -459,22 +451,26 @@ router (`routes_vulnerable.router`) alongside the secure one.
 - **Serialization**: HAL state (`hal.vehicle`, `hal.get_environment()`,
   `hal.get_telemetry()`) and `ActionResult` are serialized with
   `dataclasses.asdict()`, not Pydantic — Pydantic stays scoped to the LLM I/O
-  boundary (`LLMAction`) as established in Phase 3. Request bodies
+  boundary (`LLMAction`). Request bodies
   (`ChatRequest`, `ScenarioSetRequest`) do use minimal Pydantic models, since
   FastAPI requires them to parse/validate incoming JSON — this is the HTTP
   boundary, not the LLM boundary, so it does not conflict with that rule.
-- **`hal.reset()`** (added this phase): resets **both** `VehicleState` and
-  `EnvironmentState` to their defaults (not just actuators), so that Red
-  Teaming runs (Phase 9) start from a fully known baseline even after a
+- **`hal.reset()`** resets **both** `VehicleState` and
+  `EnvironmentState` to their defaults (not just actuators), so red-team
+  runs start from a fully known baseline even after a
   scenario like `vehicle_speed_kmh=180` was set in a previous test.
-- Endpoints implemented in Phase 4:
-  - `GET /api/state` → state snapshot (shape extended in Phase 5, see below).
+- Endpoints:
+  - `GET /api/state` → state snapshot (`{vehicle, environment, telemetry, metrics}`).
   - `POST /api/reset` → resets HAL, returns the resulting snapshot.
   - `POST /api/scenario/set {vehicle_speed_kmh?, outside_temp_c?}` → token
     required.
   - `POST /api/secure/chat {prompt}` → delegates to `SecureSDKCore`.
+  - `POST /api/vulnerable/chat {prompt}` → delegates to the vulnerable
+    pipeline (§3.2), token never required.
+  - `GET /api/audit/entries?limit=N` / `GET /api/audit/verify` → §3.4-ter.
+  - `GET /api/debug/status` / `GET /api/debug/traces` → §3.4-bis.
 
-### Phase 5: WebSocket telemetry
+### WebSocket telemetry (`app/server/ws_manager.py`)
 
 - **`app/server/ws_manager.py`** (`ConnectionManager`, module-level singleton
   `manager`): tracks active `WebSocket` connections and broadcasts messages
@@ -491,8 +487,7 @@ router (`routes_vulnerable.router`) alongside the secure one.
     disconnect) is caught and treated as a disconnect rather than
     propagating and killing the broadcast loop for all other clients.
 - **`build_state_snapshot(metrics: dict) -> dict`** (`routes_common.py`,
-  public — renamed from the Phase 4 private `_state_snapshot()`): now also
-  includes a `"metrics"` key, so `GET /api/state`, `POST /api/reset`,
+  public): includes a `"metrics"` key, so `GET /api/state`, `POST /api/reset`,
   `POST /api/scenario/set`, and the WS broadcast loop all share one single
   source of truth for the snapshot shape — REST and WS must never diverge.
   Final shape: `{vehicle, environment, telemetry, metrics}`.
@@ -514,23 +509,15 @@ router (`routes_vulnerable.router`) alongside the secure one.
   forensics, not a live dashboard feed). `routes_secure.py` increments
   `metrics["secure"]["allowed"]` or `["blocked"]` once per `/api/secure/chat`
   call, based on `result.verdict`. `routes_vulnerable.py` increments the
-  `vulnerable` counters the same way (Phase 7).
+  `vulnerable` counters the same way.
 - **Race-condition analysis (considered, discarded)**: whether
   `build_state_snapshot()` needs its own HAL lock/deep-copy accessor to avoid
   reading mid-mutation state concurrently with `apply_action()`. Concluded
   unnecessary: neither function contains an internal `await` point, so
   Python's single-threaded cooperative asyncio scheduling guarantees each
   runs to completion without interleaving.
-- **Validated behavior**: WS client receives snapshots at ~1 s cadence with
-  the `{vehicle, environment, telemetry, metrics}` shape; an abrupt
-  (non-graceful) client disconnect is caught by `broadcast()`'s try/except
-  and removed from `active_connections` without crashing the server or
-  affecting other connections; `/api/secure/chat` calls are reflected in
-  `metrics.secure` in the next broadcast tick (i.e. eventually consistent
-  within ~1 s, not synchronously pushed on every action — acceptable for a
-  dashboard use case).
 
-### Phase 6: Minimal frontend (`frontend/`)
+### Frontend (`frontend/`)
 
 - **Static serving**: `app/server/main.py` mounts `frontend/` as
   `StaticFiles(html=True)` at `"/"`, registered **after** both API routers,
@@ -557,12 +544,13 @@ router (`routes_vulnerable.router`) alongside the secure one.
   (cleared when the tab closes, never `localStorage`, never a cookie) and
   attaches it as the `X-SDK-Token` header on both `/api/secure/chat` and
   `/api/scenario/set` calls.
-- **`frontend/js/ws_client.js`**: a minimal `connectTelemetry(onMessage,
-  onStatusChange)` helper — opens the WS, forwards parsed JSON messages, and
-  flips a connected/disconnected status callback. Deliberately has **no**
-  auto-reconnect/backoff loop: a dropped connection just surfaces as
-  "Desconectado" in the header. Robust reconnection is explicitly reserved
-  for Phase 10 hardening, per the implementation plan's own phase split.
+- **`frontend/js/ws_client.js`**: `connectTelemetry(onMessage,
+  onStatusChange)` — opens the WS, forwards parsed JSON messages, and
+  reports one of `"connected"` / `"disconnected"` / `"reconnecting"` via a
+  status callback. Auto-reconnects on any drop (server restart, network
+  blip) with exponential backoff and full jitter
+  (`WS_RECONNECT_BASE_MS`..`WS_RECONNECT_MAX_MS`), so the UI can distinguish
+  "just dropped" from "actively retrying".
 - **`frontend/js/dashboard.js`**: renders the `{vehicle, environment,
   telemetry, metrics}` snapshot (shared by the initial `GET /api/state` call
   on page load — so the dashboard isn't blank for the ~1 s until the first
@@ -591,7 +579,7 @@ router (`routes_vulnerable.router`) alongside the secure one.
   (`401`/`UNAUTHENTICATED` are never silently swallowed); Reset restores all
   cards to their default values.
 
-### Phase 7: Vulnerable mode + toggle
+### Frontend: vulnerable-mode toggle
 
 - **`app/server/routes_vulnerable.py`** (new): implements `POST
   /api/vulnerable/chat` as described in §3.2 above. Mounted in `main.py` via
@@ -610,22 +598,12 @@ router (`routes_vulnerable.router`) alongside the secure one.
   snapshot (`metrics.vulnerable`).
 - **Debug-trace refresh guard**: the Admin/Debug tab's auto-refresh after a
   chat submission (§3.4-bis) fires for submissions from either pipeline —
-  the vulnerable endpoint gained its own debug-trace instrumentation (see
-  the addendum in `docs/phases/phase-7.md`), tagged `pipeline="vulnerable"`
-  so both pipelines' traces coexist in `debug_trace.jsonl` and are
-  distinguished by a `[SEGURO]`/`[VULNERABLE]` badge in the tab.
-- **Validated on-device** (with `SDK_DEBUG_MODE=true`, so every attempt is
-  recorded for audit): `POST /api/vulnerable/chat` succeeds with no
-  `X-SDK-Token` at all; a benign prompt with no DSL catalog guidance often
-  yields a hallucinated action name rejected by the HAL as `unknown_action`;
-  the explicit speed-lockout bypass (see §3.2) reproduced the expected
-  contrast — `BLOCKED`/`POLICY_VIOLATION` on `/api/secure/chat` vs.
-  `ALLOWED` with the HAL's window state actually mutated to 100% at 180
-  km/h on `/api/vulnerable/chat`; `metrics.secure`/`metrics.vulnerable` and
-  `logs/audit.log` entries (tagged `mode="secure"`/`"vulnerable"`) were
-  confirmed consistent with each test's outcome.
+  the vulnerable endpoint has its own debug-trace instrumentation, tagged
+  `pipeline="vulnerable"` so both pipelines' traces coexist in
+  `debug_trace.jsonl` and are distinguished by a `[SEGURO]`/`[VULNERABLE]`
+  badge in the tab.
 
-### Phase 8: Audit visibility panel
+### Audit panel (frontend)
 
 - **`AuditLog.read_last()`** (`app/core/audit_log.py`) and two new
   always-available, token-gated endpoints — `GET /api/audit/entries` and
@@ -635,12 +613,4 @@ router (`routes_vulnerable.router`) alongside the secure one.
   (`frontend/index.html`); `renderAuditEntry()`, `fetchAuditEntries()`,
   `fetchVerifyChain()`, `initAuditModal()` (`frontend/js/dashboard.js`)
   render entries and wire the open/close/refresh/verify controls.
-- **Validated on-device**: `GET /api/audit/entries` returns `401` with no
-  token and the expected entry list (with correctly chained
-  `entry_hash`/`prev_hash`) with a valid token; `GET /api/audit/verify`
-  returned `{"valid": true}` against the live `logs/audit.log`. In the
-  browser, the "Auditoría" button opens the modal, entries from both
-  `secure` and `vulnerable` pipelines render with the correct mode badge
-  and verdict color, "Verificar cadena" shows "Cadena OK", and the close
-  button/backdrop dismiss the modal correctly.
 

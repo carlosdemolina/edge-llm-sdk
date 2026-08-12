@@ -1,4 +1,4 @@
-"""WebSocket connection manager (see docs/DESIGN_SPEC.md §3.5).
+"""WebSocket connection manager (see docs/ARCHITECTURE.md §3.5).
 
 Deliberately has no knowledge of HAL state, metrics, or business logic — it
 only tracks active connections and broadcasts pre-built messages. This

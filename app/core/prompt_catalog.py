@@ -10,7 +10,7 @@ the SDK's own interface contract, which just made the LLM invent
 non-canonical action names (e.g. "unlockAllDoors") that the HAL then
 rejected as `unknown_action` — masking the real vulnerable-pipeline
 finding (unrestricted execution) behind a false negative. See
-docs/DESIGN_SPEC.md §3.2 for the rationale.
+docs/ARCHITECTURE.md §3.2 for the rationale.
 """
 
 from __future__ import annotations

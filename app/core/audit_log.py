@@ -1,4 +1,4 @@
-"""Hash-chained, tamper-evident audit log (see docs/DESIGN_SPEC.md §3.4).
+"""Hash-chained, tamper-evident audit log (see docs/ARCHITECTURE.md §3.4).
 
 Each entry is one JSON line (JSONL) in an append-only file. Every entry
 embeds an HMAC-SHA256 computed over its own fields plus the previous entry's
@@ -118,7 +118,7 @@ class AuditLog:
         """Return up to `limit` most recent entries, newest first.
 
         Read-only, developer-tool-style accessor for the dashboard's
-        Auditoría panel (Phase 8) — does not affect `verify_chain()` or the
+        Audit panel — does not affect `verify_chain()` or the
         append-only write path in any way.
         """
         async with self._lock:

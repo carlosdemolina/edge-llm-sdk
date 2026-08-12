@@ -1,4 +1,4 @@
-"""Data contracts for the Secure SDK core (see docs/DESIGN_SPEC.md §2.3-2.5).
+"""Data contracts for the Secure SDK core (see docs/ARCHITECTURE.md §2.3-2.5).
 
 - `ErrorCode`: operational subset of the standard error codes.
 - `LLMAction`: strict Pydantic schema the LLM's JSON output must conform to.
@@ -47,7 +47,7 @@ class Ctx:
 
 @dataclass
 class PipelineStageTrace:
-    """One step of the secure pipeline (see docs/DESIGN_SPEC.md §3.1),
+    """One step of the secure pipeline (see docs/ARCHITECTURE.md §3.1),
     captured only when `SDK_DEBUG_MODE` is on — a developer-tooling
     observation, never used for authorization decisions.
     """

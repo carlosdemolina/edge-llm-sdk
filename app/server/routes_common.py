@@ -1,5 +1,5 @@
 """Common REST routes: state snapshot, reset, and operator scenario control
-(see docs/DESIGN_SPEC.md §3.5).
+(see docs/ARCHITECTURE.md §3.5).
 
 `GET /api/state` and `POST /api/reset` are intentionally unauthenticated, per
 the design spec's auth scoping (only `/api/secure/*` and `/api/scenario/*`
@@ -128,8 +128,8 @@ async def clear_debug_traces(request: Request) -> dict:
 
 @router.get("/api/audit/entries", dependencies=[Depends(_verify_sdk_token)])
 async def get_audit_entries(request: Request, limit: int = 20) -> dict:
-    """Read-only view of `logs/audit.log` for the dashboard's Auditoría
-    panel (Phase 8). Unlike `/api/debug/traces`, this is always available —
+    """Read-only view of `logs/audit.log` for the dashboard's Audit
+    panel. Unlike `/api/debug/traces`, this is always available —
     `AuditLog` is a production security control, not a `SDK_DEBUG_MODE`-gated
     developer tool — so it never 404s regardless of debug mode.
     """

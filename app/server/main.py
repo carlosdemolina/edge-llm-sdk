@@ -1,8 +1,9 @@
-"""FastAPI application entrypoint (see docs/DESIGN_SPEC.md §3.5).
+"""FastAPI application entrypoint (see docs/ARCHITECTURE.md §3.5).
 
-Phase 5 scope adds the WebSocket telemetry broadcast loop on top of Phase 4's
-REST endpoints. Phase 7 adds the vulnerable-mode router alongside it, for a
-side-by-side secure/vulnerable comparison against the same HAL/audit log.
+Wires together the REST routers (`routes_common`, `routes_secure`,
+`routes_vulnerable`), the WebSocket telemetry broadcast loop, and the
+static frontend mount into a single app, for a side-by-side secure/
+vulnerable comparison against the same HAL/audit log.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ async def lifespan(app: FastAPI):
     dsl_catalog = json.loads((POLICIES_DIR / "dsl_actions.json").read_text())
     policy = json.loads((POLICIES_DIR / "vehicle_default.json").read_text())
 
-    # Developer-only debug tracing (see docs/DESIGN_SPEC.md): off by default.
+    # Developer-only debug tracing (see docs/ARCHITECTURE.md): off by default.
     # When enabled, `DebugTraceLog` writes plain-text prompts/LLM output to a
     # git-ignored file — never a production security control, unlike AuditLog.
     debug_log = DebugTraceLog(path=DEBUG_TRACE_LOG_PATH) if SDK_DEBUG_MODE else None
@@ -115,7 +116,7 @@ app.include_router(routes_common.router)
 app.include_router(routes_secure.router)
 app.include_router(routes_vulnerable.router)
 
-# Registered last (Phase 6): a catch-all mount, so the explicit API/WS routes
+# Registered last: a catch-all mount, so the explicit API/WS routes
 # above always take precedence over static file serving. Same-origin serving
 # means the dashboard needs no CORS configuration at all.
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

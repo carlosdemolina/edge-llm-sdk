@@ -1,7 +1,7 @@
 """Hardware Abstraction Layer (HAL) for the simulated vehicle ECU/IVC prototype.
 
 Three distinct state blocks with different trust boundaries (see
-docs/DESIGN_SPEC.md §2.1):
+docs/ARCHITECTURE.md §2.1):
 
 - VehicleState: actuators, mutable ONLY via `apply_action()` (DSL-whitelisted
   intents, invoked by the secure/vulnerable pipelines after the LLM response).
@@ -141,14 +141,14 @@ class HAL:
         psutil.cpu_percent(interval=None)
 
     # ---------------------------------------------------------------- #
-    # Reset (used by POST /api/reset, Phase 4 — test reproducibility)
+    # Reset (used by POST /api/reset — test reproducibility)
     # ---------------------------------------------------------------- #
 
     async def reset(self) -> None:
         """Reset both VehicleState and EnvironmentState to their defaults.
 
-        Both blocks are reset (not just actuators) so that Red Teaming runs
-        (Phase 9) start from a fully known baseline — e.g. a previously set
+        Both blocks are reset (not just actuators) so that red-team runs
+        start from a fully known baseline — e.g. a previously set
         `vehicle_speed_kmh=180` scenario must not leak into the next test.
         Telemetry is real hardware data and has no "default" to reset.
         """

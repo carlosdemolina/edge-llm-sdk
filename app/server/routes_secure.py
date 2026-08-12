@@ -1,4 +1,4 @@
-"""Secure chat route (see docs/DESIGN_SPEC.md §3.5, §3.1).
+"""Secure chat route (see docs/ARCHITECTURE.md §3.5, §3.1).
 
 No separate FastAPI-level auth guard is added here: authentication (step 0
 of the secure pipeline) already happens inside `SecureSDKCore.handle_request()`,
