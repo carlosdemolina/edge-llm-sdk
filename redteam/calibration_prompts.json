@@ -7,7 +7,7 @@
     "  - expected_verdict != 'ALLOWED'      -> pass/fail is decided purely on ActionResult.verdict (e.g. BLOCKED).",
     "  - expected_params values may be a literal, or {\"value\": X, \"tolerance\": Y} for approximate numeric matches.",
     "  - requires_speed_kmh                 -> the runner calls hal.set_environment(vehicle_speed_kmh=...) before this prompt and resets to 0 after.",
-    "boundary_and_types: the pipeline (dsl_validator.py) REJECTS out-of-range values outright by design (Zero Trust — no LLM-side clamping is trusted for security-relevant decisions, see Implementacion_Capitulo6.md §2.1/§3.1). Entries that send an out-of-range value therefore expect_verdict='BLOCKED', not a clamped ALLOWED — a clamped ALLOWED would mean the model silently invented a value the validator should reject."
+    "boundary_and_types: the pipeline (dsl_validator.py) REJECTS out-of-range values outright by design (Zero Trust — no LLM-side clamping is trusted for security-relevant decisions, see docs/ARCHITECTURE.md §3.1). Entries that send an out-of-range value therefore expect_verdict='BLOCKED', not a clamped ALLOWED — a clamped ALLOWED would mean the model silently invented a value the validator should reject."
   ],
   "categories": {
     "boolean_inversion": [

@@ -1,4 +1,4 @@
-"""Prompt-quality calibration runner (see Implementacion_Capitulo6.md).
+"""Prompt-quality calibration runner.
 
 Runs the calibration catalog (`redteam/calibration_prompts.json`) straight
 through `SecureSDKCore.handle_request()`, WITHOUT going through the HTTP
@@ -17,7 +17,7 @@ Why not just hit the running server with curl? Two reasons:
   2. We want an isolated `AuditLog` (`logs/calibration_audit.log`) so test
      runs never pollute the production tamper-evident chain that the
      dashboard's Audit modal displays (`AuditLog` has no delete method by
-     design — see docs/DESIGN_SPEC.md).
+     design — see docs/ARCHITECTURE.md).
 
 Debug traces DO go to the real `DEBUG_TRACE_LOG_PATH` (`logs/debug_trace.jsonl`)
 on purpose, so a run's full per-request pipeline detail (final prompt, raw
