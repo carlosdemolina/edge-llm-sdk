@@ -1,4 +1,4 @@
-"""Secure SDK pipeline orchestrator (see docs/DESIGN_SPEC.md §3.1).
+"""Secure SDK pipeline orchestrator (see docs/ARCHITECTURE.md §3.1).
 
 `SecureSDKCore` wires together every defense layer between an untrusted
 natural-language prompt and the HAL:
@@ -27,15 +27,13 @@ import asyncio
 import hmac
 import json
 import time
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import httpx
-import psutil
 from pydantic import ValidationError
 
 from app.core.audit_log import AuditLog
-from app.core.debug_log import DebugTraceLog
+from app.core.debug_log import DebugTraceLog, DebugTraceRecorder
 from app.core.dsl_validator import validate as validate_dsl
 from app.core.prompt_catalog import describe_dsl_catalog
 from app.core.sanitizer import sanitize
@@ -43,10 +41,8 @@ from app.core.schemas import (
     SECURITY_VIOLATION_PREFIX,
     ActionResult,
     Ctx,
-    DebugTrace,
     ErrorCode,
     LLMAction,
-    PipelineStageTrace,
 )
 from app.llm.ollama_client import InferenceConfig, OllamaClient
 
@@ -177,99 +173,28 @@ class SecureSDKCore:
         self._debug_mode = debug_mode
         self._debug_log = debug_log
 
-    def _new_debug_ctx(self) -> dict | None:
-        """Start a per-request debug accumulator, or None if debug mode is off.
-
-        A plain dict (not a dataclass) so it can be freely mutated in place
-        as `handle_request()` progresses through each pipeline stage,
-        without threading many separate parameters through every branch.
-        """
-        if not self._debug_mode:
-            return None
-        t0 = time.perf_counter()
-        return {
-            "t0": t0,
-            "last_t": t0,
-            "stages": [],
-            "cpu_start": psutil.cpu_percent(interval=None),
-            "ram_start": psutil.virtual_memory().percent,
-            "cpu_temp_start": self._hal.get_telemetry().cpu_temp_c,
-            "final_prompt": None,
-            "raw_llm_output": None,
-            "parsed_llm_action": None,
-            "ollama_metrics": None,
-        }
-
-    def _mark_stage(
-        self, debug_ctx: dict | None, name: str, status: str, detail: str | None = None
-    ) -> None:
-        """Append one `PipelineStageTrace` entry, timed since the previous
-        mark. No-op when debug mode is off (`debug_ctx` is None).
-        """
-        if debug_ctx is None:
-            return
-        now = time.perf_counter()
-        debug_ctx["stages"].append(
-            PipelineStageTrace(
-                name=name,
-                status=status,
-                detail=detail,
-                duration_ms=(now - debug_ctx["last_t"]) * 1000,
-            )
-        )
-        debug_ctx["last_t"] = now
-
-    async def _finalize_debug_trace(
-        self, trace_id: str, debug_ctx: dict | None
-    ) -> DebugTrace | None:
-        """Build the final `DebugTrace` (with the closing CPU/RAM snapshot)
-        and persist it to `DebugTraceLog`, if debug mode is on.
-
-        Note: `psutil.cpu_percent(interval=None)` measures "since the last
-        call anywhere in this process" - the background telemetry loop
-        (Phase 5) also samples it every second, so this is an approximation
-        of this request's own CPU usage, not a perfectly isolated reading.
-        """
-        if debug_ctx is None:
-            return None
-        trace = DebugTrace(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            stages=debug_ctx["stages"],
-            final_prompt=debug_ctx["final_prompt"],
-            raw_llm_output=debug_ctx["raw_llm_output"],
-            parsed_llm_action=debug_ctx["parsed_llm_action"],
-            ollama_metrics=debug_ctx["ollama_metrics"],
-            sdk_total_duration_ms=(time.perf_counter() - debug_ctx["t0"]) * 1000,
-            cpu_percent_start=debug_ctx["cpu_start"],
-            cpu_percent_end=psutil.cpu_percent(interval=None),
-            ram_percent_start=debug_ctx["ram_start"],
-            ram_percent_end=psutil.virtual_memory().percent,
-            cpu_temp_c_start=debug_ctx["cpu_temp_start"],
-            cpu_temp_c_end=self._hal.get_telemetry().cpu_temp_c,
-            pipeline="secure",
-        )
-        if self._debug_log is not None:
-            await self._debug_log.append(trace_id, trace)
-        return trace
-
     async def handle_request(self, prompt: str, provided_token: str) -> ActionResult:
         trace_id = str(uuid4())
-        debug_ctx = self._new_debug_ctx()
+        debug = DebugTraceRecorder(
+            self._debug_mode,
+            "secure",
+            cpu_temp_c=self._hal.get_telemetry().cpu_temp_c if self._debug_mode else None,
+        )
 
         # 0. Authentication (Zero Trust gate, constant-time compare)
         if not hmac.compare_digest(provided_token, self._sdk_token):
-            self._mark_stage(debug_ctx, "authentication", "blocked", "invalid_or_missing_token")
-            return await self._blocked(trace_id, prompt, ErrorCode.UNAUTHENTICATED, None, debug_ctx)
-        self._mark_stage(debug_ctx, "authentication", "passed")
+            debug.mark_stage("authentication", "blocked", "invalid_or_missing_token")
+            return await self._blocked(trace_id, prompt, ErrorCode.UNAUTHENTICATED, None, debug)
+        debug.mark_stage("authentication", "passed")
 
         # 0-bis. Rate-limit cooldown
         now = time.monotonic()
         cooldown = self._policy["rate_limit_cooldown_s"]
         if self._last_request_ts is not None and (now - self._last_request_ts) < cooldown:
-            self._mark_stage(debug_ctx, "rate_limit_cooldown", "blocked", f"cooldown={cooldown}s")
-            return await self._blocked(trace_id, prompt, ErrorCode.RESOURCE_LIMIT, None, debug_ctx)
+            debug.mark_stage("rate_limit_cooldown", "blocked", f"cooldown={cooldown}s")
+            return await self._blocked(trace_id, prompt, ErrorCode.RESOURCE_LIMIT, None, debug)
         self._last_request_ts = now
-        self._mark_stage(debug_ctx, "rate_limit_cooldown", "passed")
+        debug.mark_stage("rate_limit_cooldown", "passed")
 
         # 1. Ctx (per-request canary token)
         ctx = Ctx(
@@ -279,7 +204,7 @@ class SecureSDKCore:
             deadline_ms=self._policy["deadline_ms"],
             canary_token=uuid4().hex,
         )
-        self._mark_stage(debug_ctx, "ctx_creation", "passed")
+        debug.mark_stage("ctx_creation", "passed")
 
         # 2. Ingress sanitization
         ok, cleaned = sanitize(
@@ -288,15 +213,14 @@ class SecureSDKCore:
             self._policy["sanitizer"]["deny_patterns"],
         )
         if not ok:
-            self._mark_stage(debug_ctx, "sanitization", "blocked", "deny_pattern_or_length")
-            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug_ctx)
-        self._mark_stage(debug_ctx, "sanitization", "passed")
+            debug.mark_stage("sanitization", "blocked", "deny_pattern_or_length")
+            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug)
+        debug.mark_stage("sanitization", "passed")
 
         # 3. Structural prompt encapsulation
         final_prompt = build_prompt(cleaned, ctx, self._dsl_catalog)
-        if debug_ctx is not None:
-            debug_ctx["final_prompt"] = final_prompt
-        self._mark_stage(debug_ctx, "prompt_encapsulation", "passed")
+        debug.set_final_prompt(final_prompt)
+        debug.mark_stage("prompt_encapsulation", "passed")
 
         # 4. Ollama call (deadline_ms overrides the client's default read timeout)
         timeout = httpx.Timeout(connect=5.0, read=ctx.deadline_ms / 1000, write=5.0, pool=5.0)
@@ -305,47 +229,42 @@ class SecureSDKCore:
             InferenceConfig(temperature=0.0, top_k=1, top_p=0.1, format_json=True),
             timeout=timeout,
         )
-        if debug_ctx is not None:
-            debug_ctx["raw_llm_output"] = result.text
-            debug_ctx["ollama_metrics"] = result.raw_metrics
-        self._mark_stage(
-            debug_ctx, "ollama_call", "passed" if result.ok else "blocked", result.error
-        )
+        debug.set_llm_output(result.text, result.raw_metrics)
+        debug.mark_stage("ollama_call", "passed" if result.ok else "blocked", result.error)
 
         # 5.a Transport-level failure
         if not result.ok:
             code = ErrorCode.RESOURCE_LIMIT if result.error == "timeout" else ErrorCode.INTERNAL_ERROR
-            return await self._blocked(trace_id, prompt, code, None, debug_ctx)
+            return await self._blocked(trace_id, prompt, code, None, debug)
 
         # 5.b JSON parse (with single fallback)
         parsed = parse_json_with_fallback(result.text)
         if parsed is None:
-            self._mark_stage(debug_ctx, "json_parse", "blocked", "unparseable_output")
-            return await self._blocked(trace_id, prompt, ErrorCode.INVALID_INPUT, None, debug_ctx)
-        if debug_ctx is not None:
-            debug_ctx["parsed_llm_action"] = parsed
-        self._mark_stage(debug_ctx, "json_parse", "passed")
+            debug.mark_stage("json_parse", "blocked", "unparseable_output")
+            return await self._blocked(trace_id, prompt, ErrorCode.INVALID_INPUT, None, debug)
+        debug.set_parsed_action(parsed)
+        debug.mark_stage("json_parse", "passed")
 
         # 5.c Pydantic schema validation
         try:
             llm_action = LLMAction(**parsed)
         except ValidationError as exc:
-            self._mark_stage(debug_ctx, "schema_validation", "blocked", str(exc))
-            return await self._blocked(trace_id, prompt, ErrorCode.INVALID_INPUT, None, debug_ctx)
-        self._mark_stage(debug_ctx, "schema_validation", "passed")
+            debug.mark_stage("schema_validation", "blocked", str(exc))
+            return await self._blocked(trace_id, prompt, ErrorCode.INVALID_INPUT, None, debug)
+        debug.mark_stage("schema_validation", "passed")
 
         # 5.d/5.e DSL whitelist + range validation (strict rejection, no clamping)
         ok, _reason = validate_dsl(llm_action.action, llm_action.params, self._dsl_catalog)
         if not ok:
-            self._mark_stage(debug_ctx, "dsl_whitelist_range", "blocked", _reason)
-            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug_ctx)
-        self._mark_stage(debug_ctx, "dsl_whitelist_range", "passed")
+            debug.mark_stage("dsl_whitelist_range", "blocked", _reason)
+            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug)
+        debug.mark_stage("dsl_whitelist_range", "passed")
 
         # 5.f Canary leak check (raw output text, not the parsed structure)
         if ctx.canary_token in result.text:
-            self._mark_stage(debug_ctx, "canary_leak_check", "blocked", "canary_token_found")
-            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug_ctx)
-        self._mark_stage(debug_ctx, "canary_leak_check", "passed")
+            debug.mark_stage("canary_leak_check", "blocked", "canary_token_found")
+            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug)
+        debug.mark_stage("canary_leak_check", "passed")
 
         # 5.g Contextual/stateful policy
         environment = self._hal.get_environment()
@@ -354,18 +273,18 @@ class SecureSDKCore:
             llm_action.action in rules["locked_actions"]
             and environment.vehicle_speed_kmh > rules["speed_lockout_kmh"]
         ):
-            self._mark_stage(debug_ctx, "contextual_policy", "blocked", "speed_lockout")
-            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug_ctx)
-        self._mark_stage(debug_ctx, "contextual_policy", "passed")
+            debug.mark_stage("contextual_policy", "blocked", "speed_lockout")
+            return await self._blocked(trace_id, prompt, ErrorCode.POLICY_VIOLATION, None, debug)
+        debug.mark_stage("contextual_policy", "passed")
 
         # 6. Execution
         outcome = await self._hal.apply_action(llm_action.action, llm_action.params)
         if not outcome.ok:
-            self._mark_stage(debug_ctx, "execution", "blocked", "hal_apply_action_failed")
+            debug.mark_stage("execution", "blocked", "hal_apply_action_failed")
             return await self._blocked(
-                trace_id, prompt, ErrorCode.INTERNAL_ERROR, llm_action.action, debug_ctx
+                trace_id, prompt, ErrorCode.INTERNAL_ERROR, llm_action.action, debug
             )
-        self._mark_stage(debug_ctx, "execution", "passed")
+        debug.mark_stage("execution", "passed")
 
         # 7-8. Audit + deterministic response
         await self._audit.append(
@@ -376,7 +295,9 @@ class SecureSDKCore:
             error_code=None,
             action=llm_action.action,
         )
-        debug_trace = await self._finalize_debug_trace(trace_id, debug_ctx)
+        debug_trace = await debug.finalize(
+            trace_id, self._debug_log, self._hal.get_telemetry().cpu_temp_c if debug.enabled else None
+        )
         return ActionResult(
             verdict="ALLOWED",
             error_code=None,
@@ -393,7 +314,7 @@ class SecureSDKCore:
         prompt: str,
         error_code: ErrorCode,
         action: str | None,
-        debug_ctx: dict | None = None,
+        debug: DebugTraceRecorder,
     ) -> ActionResult:
         await self._audit.append(
             trace_id=trace_id,
@@ -403,7 +324,9 @@ class SecureSDKCore:
             error_code=error_code.value,
             action=action,
         )
-        debug_trace = await self._finalize_debug_trace(trace_id, debug_ctx)
+        debug_trace = await debug.finalize(
+            trace_id, self._debug_log, self._hal.get_telemetry().cpu_temp_c if debug.enabled else None
+        )
         return ActionResult(
             verdict="BLOCKED",
             error_code=error_code,

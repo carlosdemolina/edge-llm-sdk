@@ -1,6 +1,6 @@
 """Vulnerable (insecure) chat route — deliberately omits every SDK defense
 layer, to provide a quantifiable before/after comparison for the security
-case study (see Implementacion_Capitulo6.md §3.2 and docs/DESIGN_SPEC.md).
+case study (see docs/ARCHITECTURE.md §3.2).
 
 Deliberately skips, compared to the secure pipeline (`app/core/sdk_core.py`):
   - Authentication: `X-SDK-Token` is read by FastAPI but never checked —
@@ -50,23 +50,18 @@ chat, which is the whole point of the Red Teaming comparison (§3.7).
 
 from __future__ import annotations
 
-import time
 from dataclasses import asdict
-from datetime import datetime, timezone
 from uuid import uuid4
 
-import psutil
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel
 
-from app.core.debug_log import DebugTraceLog
+from app.core.debug_log import DebugTraceRecorder
 from app.core.prompt_catalog import describe_dsl_catalog
 from app.core.schemas import (
     SECURITY_VIOLATION_PREFIX,
     ActionResult,
-    DebugTrace,
     ErrorCode,
-    PipelineStageTrace,
 )
 from app.core.sdk_core import parse_json_with_fallback
 from app.hal.hal import hal
@@ -87,75 +82,6 @@ _OLLAMA_DEFAULT_INFERENCE = InferenceConfig(
 
 class ChatRequest(BaseModel):
     prompt: str
-
-
-def _new_debug_ctx(debug_mode: bool) -> dict | None:
-    """Same accumulator shape as `SecureSDKCore._new_debug_ctx()` (see
-    `app/core/sdk_core.py`), duplicated here (rather than shared) since this
-    module has no class/instance to hold state on. Kept deliberately
-    parallel so both pipelines' traces are directly comparable.
-    """
-    if not debug_mode:
-        return None
-    t0 = time.perf_counter()
-    return {
-        "t0": t0,
-        "last_t": t0,
-        "stages": [],
-        "cpu_start": psutil.cpu_percent(interval=None),
-        "ram_start": psutil.virtual_memory().percent,
-        "cpu_temp_start": hal.get_telemetry().cpu_temp_c,
-        "final_prompt": None,
-        "raw_llm_output": None,
-        "parsed_llm_action": None,
-        "ollama_metrics": None,
-    }
-
-
-def _mark_stage(debug_ctx: dict | None, name: str, status: str, detail: str | None = None) -> None:
-    """`status` is "passed", "blocked", or "skipped". "skipped" marks a
-    security stage that the secure pipeline has but this one deliberately
-    does not run at all -- kept in the trace (rather than omitted) so the
-    two pipelines' stage lists line up 1:1 for side-by-side comparison in
-    the Admin/Debug tab.
-    """
-    if debug_ctx is None:
-        return
-    now = time.perf_counter()
-    debug_ctx["stages"].append(
-        PipelineStageTrace(
-            name=name,
-            status=status,
-            detail=detail,
-            duration_ms=(now - debug_ctx["last_t"]) * 1000,
-        )
-    )
-    debug_ctx["last_t"] = now
-
-
-async def _finalize_debug_trace(
-    trace_id: str, debug_ctx: dict | None, debug_log: DebugTraceLog | None
-) -> None:
-    if debug_ctx is None:
-        return
-    trace = DebugTrace(
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        stages=debug_ctx["stages"],
-        final_prompt=debug_ctx["final_prompt"],
-        raw_llm_output=debug_ctx["raw_llm_output"],
-        parsed_llm_action=debug_ctx["parsed_llm_action"],
-        ollama_metrics=debug_ctx["ollama_metrics"],
-        sdk_total_duration_ms=(time.perf_counter() - debug_ctx["t0"]) * 1000,
-        cpu_percent_start=debug_ctx["cpu_start"],
-        cpu_percent_end=psutil.cpu_percent(interval=None),
-        ram_percent_start=debug_ctx["ram_start"],
-        ram_percent_end=psutil.virtual_memory().percent,
-        cpu_temp_c_start=debug_ctx["cpu_temp_start"],
-        cpu_temp_c_end=hal.get_telemetry().cpu_temp_c,
-        pipeline="vulnerable",
-    )
-    if debug_log is not None:
-        await debug_log.append(trace_id, trace)
 
 
 def _build_vulnerable_prompt(user_input: str, canary_token: str, catalog: dict) -> str:
@@ -184,7 +110,7 @@ async def _blocked(
     prompt: str,
     error_code: ErrorCode,
     action: str | None,
-    debug_ctx: dict | None = None,
+    debug: DebugTraceRecorder,
 ) -> dict:
     await request.app.state.audit_log.append(
         trace_id=trace_id,
@@ -195,7 +121,11 @@ async def _blocked(
         action=action,
     )
     request.app.state.metrics["vulnerable"]["blocked"] += 1
-    await _finalize_debug_trace(trace_id, debug_ctx, request.app.state.debug_log)
+    await debug.finalize(
+        trace_id,
+        request.app.state.debug_log,
+        hal.get_telemetry().cpu_temp_c if debug.enabled else None,
+    )
     return asdict(
         ActionResult(
             verdict="BLOCKED",
@@ -215,62 +145,63 @@ async def vulnerable_chat(
 ) -> dict:
     trace_id = str(uuid4())
     canary_token = uuid4().hex
-    debug_ctx = _new_debug_ctx(request.app.state.debug_mode)
+    debug_mode = request.app.state.debug_mode
+    debug = DebugTraceRecorder(
+        debug_mode,
+        "vulnerable",
+        cpu_temp_c=hal.get_telemetry().cpu_temp_c if debug_mode else None,
+    )
 
     # Stages the secure pipeline runs that this one deliberately does not —
     # kept as explicit "skipped" markers (rather than omitted) so both
     # pipelines' traces line up 1:1 in the Admin/Debug tab.
-    _mark_stage(debug_ctx, "authentication", "skipped", "token_not_checked")
-    _mark_stage(debug_ctx, "rate_limit_cooldown", "skipped", "no_cooldown")
+    debug.mark_stage("authentication", "skipped", "token_not_checked")
+    debug.mark_stage("rate_limit_cooldown", "skipped", "no_cooldown")
 
     prompt = _build_vulnerable_prompt(body.prompt, canary_token, request.app.state.dsl_catalog)
-    _mark_stage(debug_ctx, "ctx_creation", "passed")
-    if debug_ctx is not None:
-        debug_ctx["final_prompt"] = prompt
-    _mark_stage(debug_ctx, "sanitization", "skipped", "no_sanitization")
-    _mark_stage(debug_ctx, "prompt_encapsulation", "skipped", "no_anti_fusion_delimiters")
+    debug.mark_stage("ctx_creation", "passed")
+    debug.set_final_prompt(prompt)
+    debug.mark_stage("sanitization", "skipped", "no_sanitization")
+    debug.mark_stage("prompt_encapsulation", "skipped", "no_anti_fusion_delimiters")
 
     ollama_client = request.app.state.ollama_client
     result = await ollama_client.generate(prompt, _OLLAMA_DEFAULT_INFERENCE)
-    if debug_ctx is not None:
-        debug_ctx["raw_llm_output"] = result.text
-        debug_ctx["ollama_metrics"] = result.raw_metrics
-    _mark_stage(debug_ctx, "ollama_call", "passed" if result.ok else "blocked", result.error)
+    debug.set_llm_output(result.text, result.raw_metrics)
+    debug.mark_stage("ollama_call", "passed" if result.ok else "blocked", result.error)
 
     if not result.ok:
         code = ErrorCode.RESOURCE_LIMIT if result.error == "timeout" else ErrorCode.INTERNAL_ERROR
-        return await _blocked(request, trace_id, body.prompt, code, None, debug_ctx)
+        return await _blocked(request, trace_id, body.prompt, code, None, debug)
 
     # Single json.loads() + balanced-block fallback, same as the secure
     # pipeline (§3.2 point 3 calls this "a technical limitation, not a
     # deliberate defense" — reused here purely to avoid crashing the demo).
     parsed = parse_json_with_fallback(result.text)
     if parsed is None:
-        _mark_stage(debug_ctx, "json_parse", "blocked", "unparseable_output")
-        return await _blocked(request, trace_id, body.prompt, ErrorCode.INVALID_INPUT, None, debug_ctx)
-    if debug_ctx is not None:
-        debug_ctx["parsed_llm_action"] = parsed
-    _mark_stage(debug_ctx, "json_parse", "passed")
+        debug.mark_stage("json_parse", "blocked", "unparseable_output")
+        return await _blocked(request, trace_id, body.prompt, ErrorCode.INVALID_INPUT, None, debug)
+    debug.set_parsed_action(parsed)
+    debug.mark_stage("json_parse", "passed")
 
     action = parsed.get("action")
     params = parsed.get("params")
-    _mark_stage(debug_ctx, "schema_validation", "skipped", "no_pydantic_schema")
+    debug.mark_stage("schema_validation", "skipped", "no_pydantic_schema")
     if not isinstance(action, str) or not isinstance(params, dict):
-        _mark_stage(debug_ctx, "type_check", "blocked", "action_not_str_or_params_not_dict")
-        return await _blocked(request, trace_id, body.prompt, ErrorCode.INVALID_INPUT, None, debug_ctx)
-    _mark_stage(debug_ctx, "type_check", "passed")
-    _mark_stage(debug_ctx, "dsl_whitelist_range", "skipped", "no_whitelist_range_check")
-    _mark_stage(debug_ctx, "canary_leak_check", "skipped", "not_checked")
-    _mark_stage(debug_ctx, "contextual_policy", "skipped", "not_checked")
+        debug.mark_stage("type_check", "blocked", "action_not_str_or_params_not_dict")
+        return await _blocked(request, trace_id, body.prompt, ErrorCode.INVALID_INPUT, None, debug)
+    debug.mark_stage("type_check", "passed")
+    debug.mark_stage("dsl_whitelist_range", "skipped", "no_whitelist_range_check")
+    debug.mark_stage("canary_leak_check", "skipped", "not_checked")
+    debug.mark_stage("contextual_policy", "skipped", "not_checked")
 
     # Direct execution: no whitelist, no range check, no EnvironmentState
     # check. hal.apply_action() still type-checks/clamps defensively (a
     # stability net, not a security control) and never raises.
     outcome = await hal.apply_action(action, params)
     if not outcome.ok:
-        _mark_stage(debug_ctx, "execution", "blocked", "hal_apply_action_failed")
-        return await _blocked(request, trace_id, body.prompt, ErrorCode.INTERNAL_ERROR, action, debug_ctx)
-    _mark_stage(debug_ctx, "execution", "passed")
+        debug.mark_stage("execution", "blocked", "hal_apply_action_failed")
+        return await _blocked(request, trace_id, body.prompt, ErrorCode.INTERNAL_ERROR, action, debug)
+    debug.mark_stage("execution", "passed")
 
     # Canary leak check is deliberately NOT performed here (§3.2 point 4):
     # if the model reveals it, it flows straight into the message below.
@@ -286,7 +217,11 @@ async def vulnerable_chat(
         action=action,
     )
     request.app.state.metrics["vulnerable"]["allowed"] += 1
-    await _finalize_debug_trace(trace_id, debug_ctx, request.app.state.debug_log)
+    await debug.finalize(
+        trace_id,
+        request.app.state.debug_log,
+        hal.get_telemetry().cpu_temp_c if debug.enabled else None,
+    )
     return asdict(
         ActionResult(
             verdict="ALLOWED",
